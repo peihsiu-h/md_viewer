@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="{{LANG}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+{{CSS}}
+</style>
+</head>
+<body>
+
+<div class="deck" id="deck"></div>
+
+<nav class="rail" id="rail" aria-hidden="true"></nav>
+<div class="bar" id="bar"></div>
+
+<footer class="foot">
+  <span class="part" id="partname"></span>
+  <span class="spacer"></span>
+  <span><kbd>&larr;</kbd> <kbd>&rarr;</kbd> <span id="hint-nav"></span> &middot; <kbd>O</kbd> <span id="hint-ov"></span><span id="notehint"> &middot; <kbd>S</kbd> <span id="hint-notes"></span></span></span>
+  <span id="counter"></span>
+</footer>
+
+<div class="overview" id="overview">
+  <div class="ovhead"><span id="ov-title"></span><span id="ov-hint"></span></div>
+  <div class="ovgrid" id="ovgrid"></div>
+</div>
+
+<script type="text/markdown" id="mds-src" data-split="{{SPLIT}}" data-title="{{TITLE}}">
+{{MARKDOWN}}
+</script>
+
+<script>
+{{MARKED}}
+</script>
+<script>
+{{RUNTIME}}
+</script>
+</body>
+</html>

@@ -1,0 +1,52 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pulls the WebView2 SDK from NuGet into src\lib\ (not stored in the repo).
+      - name: Fetch WebView2 SDK
+        run: powershell -ExecutionPolicy Bypass -File fetch-webview2.ps1
+
+      # Uses the in-box csc.exe, so no .NET SDK setup step is needed.
+      - name: Build
+        shell: cmd
+        run: build.cmd
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: MdViewer
+          path: MdViewer.exe
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download executable
+        uses: actions/download-artifact@v4
+        with:
+          name: MdViewer
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: MdViewer.exe
+          generate_release_notes: true

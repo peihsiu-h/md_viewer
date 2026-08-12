@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MD Viewer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Visible strings carry data-i18n* attributes and are filled in by applyStaticText()
+     in app.js; see the I18N table there. -->
+<div id="tabbar">
+  <div id="tabs"></div>
+  <button id="new-tab" class="icon-btn" data-i18n-title="toolbar.newTab">+</button>
+  <div class="spacer"></div>
+  <button id="btn-open" class="tool-btn" data-i18n="toolbar.open" data-i18n-title="toolbar.openTitle"></button>
+  <button id="btn-save" class="tool-btn" data-i18n="toolbar.save" data-i18n-title="toolbar.saveTitle"></button>
+  <button id="btn-toggle-editor" class="tool-btn" data-i18n="toolbar.editor" data-i18n-title="toolbar.editorTitle"></button>
+  <div id="slides-wrap">
+    <button id="btn-slides" class="tool-btn" data-i18n="toolbar.slides" data-i18n-title="toolbar.slidesTitle"></button>
+    <button id="btn-slides-more" class="tool-btn caret" data-i18n-title="toolbar.slidesMore">▾</button>
+    <div id="slides-menu" hidden>
+      <button class="menu-item" data-act="preview" type="button" data-i18n="menu.preview"></button>
+      <button class="menu-item" data-act="export" type="button" data-i18n="menu.export"></button>
+    </div>
+  </div>
+  <div id="lang-wrap">
+    <button id="btn-lang" class="icon-btn" data-i18n-title="toolbar.lang">🌐</button>
+    <div id="lang-menu" hidden></div>
+  </div>
+  <div id="theme-wrap">
+    <button id="btn-theme" class="icon-btn" data-i18n-title="toolbar.theme">◐</button>
+    <div id="theme-menu" hidden></div>
+  </div>
+</div>
+
+<div id="panes"></div>
+
+<div id="statusbar">
+  <span id="st-name">—</span>
+  <span class="spacer"></span>
+  <span id="st-info"></span>
+</div>
+
+<input type="file" id="file-input" accept=".md,.markdown,.mdown,.mkd,.txt" multiple hidden>
+
+<div id="ext-dialog" hidden>
+  <div class="dialog-box" role="dialog" aria-modal="true" aria-labelledby="ext-title">
+    <div class="dialog-title" id="ext-title" data-i18n="dialog.title"></div>
+    <div class="dialog-body" id="ext-body"></div>
+    <div class="dialog-warn" id="ext-warn" data-i18n="dialog.warn" hidden></div>
+    <div class="dialog-actions">
+      <button id="ext-keep" class="tool-btn" data-i18n="dialog.keep"></button>
+      <button id="ext-reload" class="tool-btn primary" data-i18n="dialog.reload"></button>
+    </div>
+  </div>
+</div>
+
+<template id="pane-tpl">
+  <div class="pane">
+    <div class="editor-wrap">
+      <textarea class="editor" spellcheck="false" data-i18n-placeholder="editor.placeholder"></textarea>
+    </div>
+    <div class="divider" data-i18n-title="divider.title"></div>
+    <button class="editor-toggle" type="button"></button>
+    <div class="preview-wrap">
+      <article class="preview markdown-body"></article>
+    </div>
+    <div class="dropzone">
+      <div class="dropzone-inner">
+        <div class="dz-icon">⬇</div>
+        <div class="dz-title" data-i18n="dropzone.title"></div>
+        <div class="dz-sub"><span data-i18n="dropzone.subPre"></span><button class="dz-open" data-i18n="dropzone.button"></button><span data-i18n="dropzone.subPost"></span></div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<template id="slides-pane-tpl">
+  <div class="pane pane-slides">
+    <iframe class="slides-frame" data-i18n-title="toolbar.slides"></iframe>
+  </div>
+</template>
+
+<script src="vendor/marked.min.js"></script>
+<script src="vendor/purify.min.js"></script>
+<script src="vendor/highlight.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

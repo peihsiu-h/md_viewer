@@ -1,0 +1,10 @@
+# Build output
+MdViewer.exe
+*.pdb
+
+# WebView2 SDK components, fetched by fetch-webview2.ps1
+src/lib/*.dll
+
+# Python
+__pycache__/
+*.py[cod]
