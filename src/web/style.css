@@ -263,7 +263,7 @@ body {
   gap: 2px;
   overflow-x: auto;
   scrollbar-width: none;
-  max-width: calc(100% - 348px);   /* leave room for the toolbar, including the slides caret */
+  max-width: calc(100% - 372px);   /* leave room for the toolbar, including the save caret */
 }
 #tabs::-webkit-scrollbar { height: 0; }
 
@@ -485,9 +485,9 @@ body {
 }
 .dz-open:hover { border-color: var(--accent); color: var(--accent); }
 
-/* ---------- Dropdown menus (theme / language / slides share one look) ---------- */
-#theme-wrap, #lang-wrap, #slides-wrap { position: relative; display: flex; }
-#theme-menu, #lang-menu, #slides-menu {
+/* ---------- Dropdown menus (theme / language / slides / save share one look) ---------- */
+#theme-wrap, #lang-wrap, #slides-wrap, #save-wrap { position: relative; display: flex; }
+#theme-menu, #lang-menu, #slides-menu, #save-menu {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
@@ -499,7 +499,7 @@ body {
   border-radius: 10px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, .35);
 }
-#theme-menu[hidden], #lang-menu[hidden], #slides-menu[hidden] { display: none; }
+#theme-menu[hidden], #lang-menu[hidden], #slides-menu[hidden], #save-menu[hidden] { display: none; }
 #lang-menu { min-width: 148px; }
 .theme-item, .lang-item, .menu-item {
   display: flex;
@@ -532,11 +532,11 @@ body {
 .theme-item.on .name, .lang-item.on .name { font-weight: 600; }
 .theme-sep { height: 1px; margin: 4px 6px; background: var(--border-soft); }
 
-/* The main button and the ▾ sit flush against each other. */
-#slides-wrap { gap: 0; }
-#btn-slides-more { width: 20px; padding: 0; font-size: 10px; }
-#slides-wrap:hover .tool-btn { border-color: var(--border); color: var(--fg); }
-#btn-slides-more.on { background: var(--bg-alt); border-color: var(--border); color: var(--fg); }
+/* The main button and the ▾ sit flush against each other. (The open state is just
+   .tool-btn.on, defined with the buttons above.) */
+#slides-wrap, #save-wrap { gap: 0; }
+.tool-btn.caret { width: 20px; padding: 0; font-size: 10px; }
+#slides-wrap:hover .tool-btn, #save-wrap:hover .tool-btn { border-color: var(--border); color: var(--fg); }
 
 /* ---------- Dialog (file changed on disk) ---------- */
 /* Deliberately not the native confirm(): it blocks the whole WebView synchronously, which stops automated tests dead. */
@@ -745,10 +745,22 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 
-/* Print */
+/* Print — and, through PrintToPdfAsync, "Save as PDF" too.
+   The panes are laid out as absolutely-positioned, overflow-hidden boxes filling the
+   window, which on paper clips everything to the first page. Undo that whole stack here
+   so the document simply flows; app.js drops data-skin for the duration, so the colours
+   are always the light palette. */
 @media print {
-  #tabbar, #statusbar, .editor-wrap, .divider, #ext-dialog { display: none !important; }
+  #tabbar, #statusbar, .editor-wrap, .divider, .editor-toggle, .dropzone,
+  #ext-dialog { display: none !important; }
+  html, body { height: auto; overflow: visible; }
+  body { display: block; }
+  #panes { position: static; overflow: visible; }
+  .pane { position: static; display: block; }
   .pane[hidden] { display: none !important; }
   .preview-wrap { overflow: visible; }
-  body { overflow: visible; height: auto; }
+  .preview { max-width: none; padding: 0; }
+  .markdown-body pre, .markdown-body table,
+  .markdown-body img, .markdown-body blockquote { break-inside: avoid; }
+  .markdown-body h1, .markdown-body h2, .markdown-body h3 { break-after: avoid; }
 }

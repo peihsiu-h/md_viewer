@@ -34,11 +34,16 @@ namespace MdViewer
               "Windows 11; a free download from Microsoft on Windows 10).\n\nDetails: " },
             { "err.readFailed", "Could not read: " },
             { "err.notFound", "File not found: " },
+            { "err.pdfEngine", "the print engine reported a failure" },
             { "filter.open", "Markdown files|*.md;*.markdown;*.mdown;*.mkd;*.mdwn;*.txt|All files|*.*" },
             { "filter.save", "Markdown files|*.md;*.markdown|Text files|*.txt|All files|*.*" },
             { "filter.export", "HTML slides|*.html;*.htm|All files|*.*" },
+            { "filter.exportDoc", "HTML document|*.html;*.htm|All files|*.*" },
+            { "filter.pdf", "PDF document|*.pdf|All files|*.*" },
             { "file.untitled", "Untitled.md" },
             { "file.slides", "slides.html" },
+            { "file.doc", "document.html" },
+            { "file.pdf", "document.pdf" },
             { "confirm.unsaved", "{0} tab(s) still have unsaved changes. Close anyway?" },
         };
 
@@ -51,11 +56,16 @@ namespace MdViewer
               "Windows 10 可從 Microsoft 官網免費安裝）。\n\n詳細訊息：" },
             { "err.readFailed", "無法讀取：" },
             { "err.notFound", "找不到檔案：" },
+            { "err.pdfEngine", "列印引擎回報失敗" },
             { "filter.open", "Markdown 檔案|*.md;*.markdown;*.mdown;*.mkd;*.mdwn;*.txt|所有檔案|*.*" },
             { "filter.save", "Markdown 檔案|*.md;*.markdown|文字檔|*.txt|所有檔案|*.*" },
             { "filter.export", "HTML 投影片|*.html;*.htm|所有檔案|*.*" },
+            { "filter.exportDoc", "HTML 文件|*.html;*.htm|所有檔案|*.*" },
+            { "filter.pdf", "PDF 文件|*.pdf|所有檔案|*.*" },
             { "file.untitled", "未命名.md" },
             { "file.slides", "投影片.html" },
+            { "file.doc", "文件.html" },
+            { "file.pdf", "文件.pdf" },
             { "confirm.unsaved", "還有 {0} 個分頁尚未儲存，確定要關閉嗎？" },
         };
 
@@ -394,6 +404,7 @@ namespace MdViewer
                 case "open": CmdOpen(id); break;
                 case "save": CmdSave(id, m); break;
                 case "export": CmdExport(id, m); break;
+                case "printPdf": CmdPrintPdf(id, m); break;
                 case "reopen": CmdReopen(id, m); break;
                 case "title": CmdTitle(m); break;
                 case "openPath": CmdOpenPath(id, m); break;
@@ -493,46 +504,56 @@ namespace MdViewer
             Reply(id, r);
         }
 
-        // Export slides: the web side has already assembled the content, so all this does is
-        // pick a location and write UTF-8. With an explicit path it writes straight away and
-        // skips the dialog — that's the route the automated tests take, since CDP cannot
-        // click native dialogs.
+        // Where an exported file should go. Returns false, having replied "cancelled", when
+        // the user backs out. An explicit path shows no dialog at all — that is the route
+        // the automated tests take, since CDP cannot click native dialogs.
+        bool AskSavePath(object id, Dictionary<string, object> m,
+                         string filterKey, string ext, string fallbackKey, out string chosen)
+        {
+            chosen = Str(Get(m, "path"));
+            if (!string.IsNullOrEmpty(chosen)) return true;
+
+            string name = Str(Get(m, "name"));
+            string near = Str(Get(m, "dir"));
+            using (var dlg = new SaveFileDialog())
+            {
+                dlg.Filter = L.T(filterKey);
+                dlg.DefaultExt = ext;
+                dlg.FileName = string.IsNullOrEmpty(name) ? L.T(fallbackKey) : name;
+                // Default to sitting next to the source .md
+                try
+                {
+                    if (!string.IsNullOrEmpty(near))
+                    {
+                        string dir = Path.GetDirectoryName(near);
+                        if (Directory.Exists(dir)) dlg.InitialDirectory = dir;
+                    }
+                }
+                catch { }
+
+                if (dlg.ShowDialog(this) != DialogResult.OK)
+                {
+                    var c = new Dictionary<string, object>();
+                    c["ok"] = false;
+                    c["cancelled"] = true;
+                    Reply(id, c);
+                    return false;
+                }
+                chosen = dlg.FileName;
+                return true;
+            }
+        }
+
+        // Export: the web side has already assembled the whole file, so all this does is
+        // pick a location and write UTF-8. 'kind' says whether that content is a slide
+        // deck or a plain document, which only changes the dialog's wording.
         void CmdExport(object id, Dictionary<string, object> m)
         {
-            string path = Str(Get(m, "path"));
-            string name = Str(Get(m, "name"));
             string text = Str(Get(m, "text"));
-            string near = Str(Get(m, "dir"));
-
-            if (string.IsNullOrEmpty(path))
-            {
-                using (var dlg = new SaveFileDialog())
-                {
-                    dlg.Filter = L.T("filter.export");
-                    dlg.DefaultExt = "html";
-                    dlg.FileName = string.IsNullOrEmpty(name) ? L.T("file.slides") : name;
-                    // Default to sitting next to the source .md
-                    try
-                    {
-                        if (!string.IsNullOrEmpty(near))
-                        {
-                            string dir = Path.GetDirectoryName(near);
-                            if (Directory.Exists(dir)) dlg.InitialDirectory = dir;
-                        }
-                    }
-                    catch { }
-
-                    if (dlg.ShowDialog(this) != DialogResult.OK)
-                    {
-                        var c = new Dictionary<string, object>();
-                        c["ok"] = false;
-                        c["cancelled"] = true;
-                        Reply(id, c);
-                        return;
-                    }
-                    path = dlg.FileName;
-                }
-            }
+            bool doc = Str(Get(m, "kind")) == "doc";
+            string path;
+            if (!AskSavePath(id, m, doc ? "filter.exportDoc" : "filter.export", "html",
+                             doc ? "file.doc" : "file.slides", out path)) return;
 
             try
             {
@@ -556,6 +577,71 @@ namespace MdViewer
             r["path"] = path;
             r["name"] = Path.GetFileName(path);
             Reply(id, r);
+        }
+
+        // Save as PDF. WebView2 prints the page it is currently showing, so by the time
+        // this runs the web side has already made the exported tab the visible one and
+        // dropped the theme's skin; the @media print rules in style.css take the app
+        // chrome away and let the document flow across pages.
+        // Which paper this user actually prints on. WebView2's print settings default to
+        // 8.5x11 everywhere, which is wrong outside North America; Windows knows the answer
+        // (LOCALE_IPAPERSIZE: 1 = Letter, 5 = Legal, everything else A-series), so ask it.
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+        static extern int GetLocaleInfoEx(string localeName, uint lcType, out int value, int cch);
+
+        const uint LOCALE_IPAPERSIZE = 0x0000100A;
+        const uint LOCALE_RETURN_NUMBER = 0x20000000;
+
+        static void ApplyPaperSize(CoreWebView2PrintSettings ps)
+        {
+            double w = 8.27, h = 11.69;                 // A4, the sane default for most of the world
+            try
+            {
+                int paper;
+                if (GetLocaleInfoEx(null, LOCALE_IPAPERSIZE | LOCALE_RETURN_NUMBER,
+                                    out paper, 2) != 0)
+                {
+                    if (paper == 1) { w = 8.5; h = 11.0; }        // Letter
+                    else if (paper == 5) { w = 8.5; h = 14.0; }   // Legal
+                }
+            }
+            catch { }
+            ps.PageWidth = w;
+            ps.PageHeight = h;
+        }
+
+        async void CmdPrintPdf(object id, Dictionary<string, object> m)
+        {
+            string path;
+            if (!AskSavePath(id, m, "filter.pdf", "pdf", "file.pdf", out path)) return;
+
+            try
+            {
+                CoreWebView2PrintSettings ps = web.CoreWebView2.Environment.CreatePrintSettings();
+                ps.ShouldPrintBackgrounds = true;      // code blocks and tables keep their fills
+                ApplyPaperSize(ps);
+                ps.MarginTop = 0.4;
+                ps.MarginBottom = 0.4;
+                ps.MarginLeft = 0.5;
+                ps.MarginRight = 0.5;
+                bool ok = await web.CoreWebView2.PrintToPdfAsync(path, ps);
+                if (!ok)
+                {
+                    ReplyError(id, L.T("err.pdfEngine"));
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                ReplyError(id, ex.Message);
+                return;
+            }
+
+            var pr = new Dictionary<string, object>();
+            pr["ok"] = true;
+            pr["path"] = path;
+            pr["name"] = Path.GetFileName(path);
+            Reply(id, pr);
         }
 
         // Report the current on-disk state of these paths; the web side uses it to tell

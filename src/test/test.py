@@ -137,6 +137,15 @@ def click_tab(cdp, title):
            ".find(t=>t.textContent.includes(%s)).click()" % json.dumps(title))
 
 
+def pick_theme(cdp, theme_id):
+    """Choose a theme the way a user would: open the menu, click the entry."""
+    cdp.ev("document.querySelector('#btn-theme').click()")
+    time.sleep(0.3)
+    cdp.ev("document.querySelector('#theme-menu .theme-item[data-id=%s]').click()"
+           % json.dumps(theme_id))
+    time.sleep(0.5)
+
+
 def set_lang(cdp, lang):
     """Pin the UI language so the assertions below have a fixed vocabulary."""
     cdp.ev("window.__mdv.applyLang(%s)" % json.dumps(lang))
@@ -534,10 +543,7 @@ def main():
     # This also proves highlighting survived deleting the vendored hljs stylesheets.
     check("syntax highlighting recolours with the theme", st["kw"] == "rgb(255, 121, 198)", st["kw"])
 
-    cdp.ev("document.querySelector('#btn-theme').click()")
-    time.sleep(0.3)
-    cdp.ev("document.querySelector('#theme-menu .theme-item[data-id=\"solarized-light\"]').click()")
-    time.sleep(0.5)
+    pick_theme(cdp, "solarized-light")
     st = cdp.ev("""(() => {
       const r = document.documentElement;
       const kw = document.querySelector('.pane:not([hidden]) .preview .hljs-keyword');
@@ -691,6 +697,119 @@ def main():
     }))()""")
     check("an unwritable path reports an error instead of crashing",
           bad.get("ok") is False and bool(bad.get("error")), bad)
+
+    # ---------- Saving the document as HTML / PDF ----------
+    # Both go through __mdv with an explicit path, so the real exporters run but the
+    # native save dialog never opens: CDP cannot click one, and it blocks the whole
+    # WebView while it is up. Never press Ctrl+Shift+H / Ctrl+Shift+D from a test.
+    menu = cdp.ev("""(() => {
+      document.querySelector('#btn-save-more').click();
+      return {
+        open: !document.querySelector('#save-menu').hidden,
+        items: [...document.querySelectorAll('#save-menu .menu-item')].map(b => b.dataset.act),
+      };
+    })()""")
+    check("the save button has a dropdown with HTML and PDF",
+          menu["open"] and menu["items"] == ["html", "pdf"], menu)
+    cdp.ev("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))")
+    time.sleep(0.3)
+    check("Esc closes the save menu", cdp.ev("document.querySelector('#save-menu').hidden"))
+
+    out_doc = os.path.join(WORK, "demo.export.html")
+    if os.path.isfile(out_doc):
+        os.remove(out_doc)
+    click_tab(cdp, "demo.md")
+    time.sleep(0.6)
+    skin_now = cdp.ev("document.documentElement.dataset.skin")
+    cdp.ev("window.__mdv.exportDocument(window.__mdv.activeTab(), %s)" % json.dumps(out_doc))
+    time.sleep(0.8)
+
+    doc = ""
+    if os.path.isfile(out_doc):
+        with open(out_doc, encoding="utf-8") as f:
+            doc = f.read()
+    check("Save as HTML writes a standalone document",
+          doc.startswith("<!DOCTYPE html>") and 'class="doc markdown-body"' in doc, doc[:60])
+    check("the document is titled after its first heading",
+          "<title>Rendering demo</title>" in doc)
+    check("the whole stylesheet travels with it",
+          "--hl-keyword" in doc and ".markdown-body pre" in doc)
+    check("the rendered structure survives (table, alert, highlighting)",
+          "<table" in doc and 'class="md-alert' in doc
+          and '<span class="hljs-keyword">' in doc)
+    check("relative images are inlined as data URIs", "data:image/png;base64," in doc)
+    check("nothing external is left to fetch",
+          "mdviewer.local" not in doc and "<script" not in doc
+          and 'rel="stylesheet"' not in doc)
+    check("the exported document carries the current theme and language",
+          ('data-skin="%s"' % skin_now) in doc and 'lang="en"' in doc, skin_now)
+    # DOMPurify reorders attributes, so match on the tag rather than an exact string.
+    boxes = re.findall(r"<input[^>]*>", doc)
+    check("task lists keep their styling but the boxes stay inert",
+          'class="contains-task-list"' in doc and 'class="task-list-item"' in doc
+          and bool(boxes)
+          and all('type="checkbox"' in b and "disabled" in b for b in boxes), boxes)
+
+    # PDF: a deliberately long document under a dark theme, which proves both that the
+    # print rules let it flow across pages and that the palette is forced light.
+    out_pdf = os.path.join(WORK, "demo.export.pdf")
+    if os.path.isfile(out_pdf):
+        os.remove(out_pdf)
+    cdp.ev("document.querySelector('#new-tab').click()")
+    time.sleep(0.5)
+    body = "Body text long enough to fill the page several times over. " * 12
+    long_md = "# PDF pagination test\n\n" + "".join(
+        "## Section %d\n\n%s\n\n" % (i, body) for i in range(1, 21))
+    cdp.ev("""(() => {
+      const e = document.querySelector('.pane:not([hidden]) .editor');
+      e.value = %s;
+      e.dispatchEvent(new Event('input', {bubbles: true}));
+    })()""" % json.dumps(long_md))
+    time.sleep(1.0)
+    pick_theme(cdp, "dracula")
+
+    cdp.ev("window.__mdv.exportPdf(window.__mdv.activeTab(), %s)" % json.dumps(out_pdf))
+    time.sleep(1.0)
+    pdf = b""
+    if os.path.isfile(out_pdf):
+        with open(out_pdf, "rb") as f:
+            pdf = f.read()
+    check("Save as PDF writes a real PDF file",
+          pdf.startswith(b"%PDF-") and len(pdf) > 5000, len(pdf))
+    # On screen .pane is absolutely positioned inside an overflow:hidden box; without the
+    # print rules undoing that, everything past the first page is clipped away.
+    pages = len(re.findall(rb"/Type\s*/Page[^s]", pdf))
+    check("the PDF paginates instead of being clipped to one page", pages >= 2, pages)
+    # 72pt to the inch; portrait, and the paper Windows says this region uses.
+    box = re.search(rb"/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)", pdf)
+    dims = (round(float(box.group(1)) / 72, 1), round(float(box.group(2)) / 72, 1)) if box else None
+    check("the page is portrait and a real paper size",
+          dims in ((8.3, 11.7), (8.5, 11.0), (8.5, 14.0)), dims)
+    check("the theme is put back after writing the PDF",
+          cdp.ev("document.documentElement.dataset.skin") == "dracula")
+
+    pick_theme(cdp, "solarized-light")
+    cdp.ev("""(() => {
+      const e = document.querySelector('.pane:not([hidden]) .editor');
+      e.value = '';
+      e.dispatchEvent(new Event('input', {bubbles: true}));
+    })()""")
+    time.sleep(0.3)
+    cdp.ev("document.querySelector('.tab.active .close').click()")
+    time.sleep(0.4)
+
+    badpdf = cdp.ev("""(async () => await new Promise(res => {
+      const h = e => {
+        if (e.data && e.data.id === 987656) {
+          chrome.webview.removeEventListener('message', h); res(e.data);
+        }
+      };
+      chrome.webview.addEventListener('message', h);
+      chrome.webview.postMessage({id: 987656, cmd: 'printPdf',
+        path: 'Z:\\\\no-such-dir\\\\x.pdf'});
+    }))()""")
+    check("an unwritable PDF path reports an error instead of crashing",
+          badpdf.get("ok") is False and bool(badpdf.get("error")), badpdf)
 
     # ---------- Previewing slides in a tab ----------
     # The deck runs in a same-origin srcdoc iframe, so contentDocument can be inspected

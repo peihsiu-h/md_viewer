@@ -2,7 +2,8 @@
 
 Finished 2026-07-21. External-change detection, a session file, nine themes and slide
 export followed on 2026-07-28; previewing slides in a tab on 2026-07-31; the
-English / 正體中文 interface on 2026-08-12.
+English / 正體中文 interface on 2026-08-12; saving a document as HTML or PDF on
+2026-09-03.
 
 What follows is the *why* behind the design, and the traps hit getting there. Read this
 before changing anything. Usage lives in [README.md](README.md).
@@ -232,6 +233,53 @@ reading contents directly — only then saving needs a "save as".
     `.pane:not([hidden]) .slides-frame`: with several slide tabs open the former grabs
     somebody else's iframe. Written the first way, it picked up the one left behind by the
     previous check, and the symptom was slide counts and content that matched nothing.
+- **"Save as HTML" is the preview, not a deck.** It goes through the same pipeline the
+  preview does — `renderInto()`, which is what `render()` was split into — and simply stops
+  before the three decorations that only mean anything inside the app: links that open
+  tabs, live checkboxes, and images pointed at the virtual origin. Everything else (alerts,
+  heading ids, highlighting, the task-list classes) is presentation and travels with it.
+  - **The whole of `style.css` is inlined**, not a trimmed-down export stylesheet. A second
+    copy of the `.markdown-body` and `--hl-*` rules would drift within a release or two —
+    the slides assets already show what maintaining copies costs — whereas the app-chrome
+    rules match nothing in a bare document, so the price is about 20 KB of dead CSS. All
+    nine palettes come along, which is why keeping the user's theme costs nothing beyond
+    writing `data-skin` on `<html>`.
+  - `src\web\export.html` is the template, filled by the same single-pass `fill()` helper
+    as the deck. **Do not name a placeholder in that file's comments** — the pass
+    substitutes it there too, which is how the first draft shipped `style.css` twice.
+  - Relative images become data URIs, fetched back through the same `__local` origin the
+    preview uses, so the file really is one file. Past a 32 MB budget the rest keep their
+    relative paths: a broken link beats an unsendable attachment.
+- **"Save as PDF" prints the live page** with `CoreWebView2.PrintToPdfAsync`, so the
+  `@media print` rules are what shape it and the tab being exported has to be the visible
+  one (`exportPdf()` activates it first). An offscreen WebView2 holding the exported HTML
+  would make the two outputs identical, but WebView2's rendering while the control is not
+  visible is not something to bet on, and it would need its own copy of the
+  `WebResourceRequested` plumbing just to see the images.
+  - **The print rules were broken before any of this.** `.pane` is `position:absolute;
+    inset:0` inside an `overflow:hidden` `#panes`, so paper output was clipped to the first
+    page — `Ctrl+P` had never printed a long file properly. The `@media print` block now
+    puts that whole stack back to static/visible. `test.py` counts `/Type /Page` in the
+    produced PDF for exactly this reason.
+  - **The theme is forced light for the duration.** Backgrounds aside, `--fg` on a dark
+    theme is pale grey, which on white paper is nearly invisible. Rather than duplicating
+    the light palette inside a print block, `forceLightSkin()` just removes `data-skin`:
+    `:root` with none *is* GitHub Light. `beforeprint` / `afterprint` do the same for
+    `Ctrl+P`, behind a counter — a `beforeprint` raised by the PDF print itself must not
+    restore the theme out from under `exportPdf()`'s own restore, or the app is left stuck
+    in the light palette.
+  - **Paper size comes from the OS, not from WebView2.** `CoreWebView2PrintSettings`
+    defaults to 8.5x11 everywhere, which is wrong outside North America — the first PDF
+    out of this came back as Letter on a machine set to Taiwan. `ApplyPaperSize()` asks
+    Windows instead (`GetLocaleInfoEx` / `LOCALE_IPAPERSIZE`: 1 = Letter, 5 = Legal,
+    anything else A-series) and falls back to A4. Reading the default printer's page setup
+    would have been the other route, but that answers a different question and is wrong on
+    a machine with no printer installed.
+  - The window visibly flips to the light palette while the save dialog is up. That is the
+    price of doing it in one round trip, and it doubles as a preview of the output.
+- **All four dropdowns register in one `MENUS` list.** Adding the save menu the old way
+  meant editing four separate lists — each menu's open handler, the click-anywhere-else
+  handler and Escape. `registerMenu()` / `closeMenus()` make it one line per menu.
 - **Dialogs are hand-rolled rather than native `confirm()`**: `confirm()` blocks the entire
   WebView synchronously, taking CDP down with it, which makes that path permanently
   untestable. The in-page modal (`#ext-dialog`) can also show the filename and a red
@@ -240,7 +288,7 @@ reading contents directly — only then saving needs a "save as".
 
 ## Verification
 
-`py src\test\test.py` — **96 end-to-end checks**. It generates its own fixtures and shuts
+`py src\test\test.py` — **123 end-to-end checks**. It generates its own fixtures and shuts
 the program down when finished.
 
 It launches `MdViewer.exe --dev` (which opens a remote debugging port on `127.0.0.1:9333`)
@@ -251,6 +299,12 @@ clicking with `Input.dispatchMouseEvent` and then `Input.insertText` — a plain
 `.focus()` cannot detect being covered by an overlay. At the end it shuts everything down,
 **deletes the WebView2 profile as well**, and reopens to confirm tabs were restored from
 `session.json` rather than localStorage.
+
+**Never let a test press an export shortcut.** `Ctrl+Shift+E` / `Ctrl+Shift+H` /
+`Ctrl+Shift+D` all open a native `SaveFileDialog`, which CDP cannot click and which blocks
+the whole WebView until it is dismissed — the run just hangs. Every exporter therefore
+takes an optional `path` that skips the dialog (`CmdSave` has always done the same), and
+the tests drive the real functions through `window.__mdv` with one.
 
 Requires `pip install websocket-client`. Rebuild with `build.cmd` and run this after
 changing anything under `src\`.
@@ -281,6 +335,10 @@ changing anything under `src\`.
   into `src\web\slides\` and rebuild. **Do not change only the copies here** — the
   command-line converter will drift away. The in-app preview and the export share one
   output, so both change together.
+- **Changing how an exported document looks**: `src\web\export.html` holds only the
+  standalone-page overrides — the app shell's flex/fixed-height layout undone, and the
+  centred column. Everything else comes from the inlined `style.css`, so a change to the
+  Markdown or highlighting rules shows up in exports with no second edit. Keep it that way.
 - **Changing the UI**: only `src\web\` is involved; the C# does not need touching.
 - **Changing the icon**: `make-icon.ps1` produces `src\app.ico`.
 - **The exe is x64 only.** ARM64 needs different native DLLs in `src\lib\` and a

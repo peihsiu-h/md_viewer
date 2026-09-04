@@ -15,7 +15,14 @@
   <button id="new-tab" class="icon-btn" data-i18n-title="toolbar.newTab">+</button>
   <div class="spacer"></div>
   <button id="btn-open" class="tool-btn" data-i18n="toolbar.open" data-i18n-title="toolbar.openTitle"></button>
-  <button id="btn-save" class="tool-btn" data-i18n="toolbar.save" data-i18n-title="toolbar.saveTitle"></button>
+  <div id="save-wrap">
+    <button id="btn-save" class="tool-btn" data-i18n="toolbar.save" data-i18n-title="toolbar.saveTitle"></button>
+    <button id="btn-save-more" class="tool-btn caret" data-i18n-title="toolbar.saveMore">▾</button>
+    <div id="save-menu" hidden>
+      <button class="menu-item" data-act="html" type="button" data-i18n="menu.saveHtml"></button>
+      <button class="menu-item" data-act="pdf" type="button" data-i18n="menu.savePdf"></button>
+    </div>
+  </div>
   <button id="btn-toggle-editor" class="tool-btn" data-i18n="toolbar.editor" data-i18n-title="toolbar.editorTitle"></button>
   <div id="slides-wrap">
     <button id="btn-slides" class="tool-btn" data-i18n="toolbar.slides" data-i18n-title="toolbar.slidesTitle"></button>

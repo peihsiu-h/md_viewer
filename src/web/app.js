@@ -13,6 +13,8 @@
     newTab: $('#new-tab'),
     open: $('#btn-open'),
     save: $('#btn-save'),
+    saveMore: $('#btn-save-more'),
+    saveMenu: $('#save-menu'),
     toggleEditor: $('#btn-toggle-editor'),
     slides: $('#btn-slides'),
     slidesMore: $('#btn-slides-more'),
@@ -66,6 +68,7 @@
       'toolbar.newTab': 'New tab (Ctrl+T)',
       'toolbar.openTitle': 'Open file (Ctrl+O)',
       'toolbar.saveTitle': 'Save (Ctrl+S)',
+      'toolbar.saveMore': 'Save a copy as HTML or PDF',
       'toolbar.editorTitle': 'Hide/show the editor (Ctrl+E)',
       'toolbar.slidesTitle': 'Preview slides in a tab (Ctrl+Shift+P)',
       'toolbar.slidesMore': 'More slide actions',
@@ -74,7 +77,9 @@
       'toolbar.lang': 'Language',
       'toolbar.langCurrent': 'Language: {0}',
       'menu.preview': '▷ Preview in a tab',
-      'menu.export': '⭳ Export as HTML…',
+      'menu.export': '⭳ Export slides as HTML…',
+      'menu.saveHtml': '⭳ Save as HTML…',
+      'menu.savePdf': '⭳ Save as PDF…',
       'dialog.title': 'File changed on disk',
       'dialog.body': '“{0}” has changed on disk. Load the latest version?',
       'dialog.warn': 'This tab has unsaved changes; reloading will discard them.',
@@ -109,10 +114,12 @@
       'editorToggle.hide': 'Hide the editor (Ctrl+E)',
       'editorToggle.show': 'Show the editor (Ctrl+E)',
       'flash.noEditor': 'Slide tabs have no editor',
-      'flash.cantSave': 'Slide tabs cannot be saved — use “Export as HTML…”',
+      'flash.cantSave': 'Slide tabs cannot be saved — use “Export slides as HTML…”',
       'flash.saved': 'Saved {0}',
       'flash.downloaded': 'Downloaded {0}',
       'flash.exported': 'Exported {0}',
+      'flash.savedPdf': 'Wrote {0}',
+      'flash.imagesTooBig': 'Some images were left as links — inlining them all would be too large',
       'flash.emptyExport': 'This tab is empty — nothing to export',
       'flash.emptyPreview': 'This tab is empty — nothing to preview',
       'flash.sourceClosed': 'The source tab has been closed',
@@ -123,6 +130,8 @@
       'error.reloadFailed': 'Could not reload the file',
       'error.unknown': 'unknown error',
       'error.buildSlides': 'Could not build the slides: {0}',
+      'error.buildDoc': 'Could not build the document: {0}',
+      'error.pdfFailed': 'Could not write the PDF: {0}',
       'error.asset': 'Could not read {0}',
       'confirm.closeDirty': '“{0}” has unsaved changes. Close it anyway?',
       'theme.auto': 'Match system',
@@ -137,6 +146,7 @@
       'toolbar.newTab': '開新分頁 (Ctrl+T)',
       'toolbar.openTitle': '開啟檔案 (Ctrl+O)',
       'toolbar.saveTitle': '儲存 (Ctrl+S)',
+      'toolbar.saveMore': '另存成 HTML 或 PDF',
       'toolbar.editorTitle': '隱藏/展開編輯區 (Ctrl+E)',
       'toolbar.slidesTitle': '在分頁中預覽投影片 (Ctrl+Shift+P)',
       'toolbar.slidesMore': '投影片的其他動作',
@@ -145,7 +155,9 @@
       'toolbar.lang': '語言',
       'toolbar.langCurrent': '語言：{0}',
       'menu.preview': '▷ 在分頁中預覽',
-      'menu.export': '⭳ 匯出成 HTML…',
+      'menu.export': '⭳ 匯出投影片 HTML…',
+      'menu.saveHtml': '⭳ 另存 HTML…',
+      'menu.savePdf': '⭳ 另存 PDF…',
       'dialog.title': '檔案已被其他程式修改',
       'dialog.body': '「{0}」在磁碟上的內容已經變更。要載入最新版本嗎？',
       'dialog.warn': '目前分頁有未儲存的修改，重新載入會蓋掉。',
@@ -180,10 +192,12 @@
       'editorToggle.hide': '隱藏編輯區 (Ctrl+E)',
       'editorToggle.show': '展開編輯區 (Ctrl+E)',
       'flash.noEditor': '投影片分頁沒有編輯區',
-      'flash.cantSave': '投影片分頁存不了，要存檔請用「匯出成 HTML…」',
+      'flash.cantSave': '投影片分頁存不了，要存檔請用「匯出投影片 HTML…」',
       'flash.saved': '已儲存 {0}',
       'flash.downloaded': '已下載 {0}',
       'flash.exported': '已匯出 {0}',
+      'flash.savedPdf': '已寫出 {0}',
+      'flash.imagesTooBig': '部分圖片維持連結未內嵌 —— 全部內嵌會讓檔案過大',
       'flash.emptyExport': '這個分頁是空的，沒東西可以匯出',
       'flash.emptyPreview': '這個分頁是空的，沒東西可以預覽',
       'flash.sourceClosed': '來源分頁已關閉',
@@ -194,6 +208,8 @@
       'error.reloadFailed': '無法重新載入檔案',
       'error.unknown': '未知錯誤',
       'error.buildSlides': '產生投影片失敗：{0}',
+      'error.buildDoc': '產生文件失敗：{0}',
+      'error.pdfFailed': '無法寫出 PDF：{0}',
       'error.asset': '讀不到 {0}',
       'confirm.closeDirty': '「{0}」尚未儲存，確定關閉？',
       'theme.auto': '跟隨系統',
@@ -388,11 +404,19 @@
     return null;
   }
 
-  function decorateTaskLists(root, tab) {
-    root.querySelectorAll('li > input[type="checkbox"]').forEach((cb, i) => {
+  // The classes are presentation — hide the bullet, pull the box into the margin — so
+  // they belong anywhere the document is shown, exported files included. Making the boxes
+  // live is the part only the app can offer.
+  function markTaskLists(root) {
+    root.querySelectorAll('li > input[type="checkbox"]').forEach(cb => {
       const li = cb.parentElement;
       li.classList.add('task-list-item');
       if (li.parentElement) li.parentElement.classList.add('contains-task-list');
+    });
+  }
+
+  function decorateTaskLists(root, tab) {
+    root.querySelectorAll('li > input[type="checkbox"]').forEach((cb, i) => {
       cb.disabled = false;
       cb.addEventListener('change', () => {
         const next = toggleTaskInSource(tab.pane.editor.value, i, cb.checked);
@@ -418,25 +442,31 @@
     });
   }
 
-  function render(tab) {
-    if (tab.kind === 'slides') return;              // slide tabs live in an iframe, not here
-    const src = tab.pane.editor.value;
+  // Markdown → sanitised DOM, plus the decorations that make sense anywhere the document
+  // is shown. The rest (links, task lists, images) only make sense inside the app and are
+  // added by render(); "Save as HTML" stops here, so both routes share one pipeline.
+  function renderInto(node, src) {
     let html;
     try {
       html = marked.parse(src);
     } catch (err) {
       html = `<pre>${tr('md.parseError')}\n${String(err && err.message || err)}</pre>`;
     }
-    const clean = DOMPurify.sanitize(html, {
+    node.innerHTML = DOMPurify.sanitize(html, {
       USE_PROFILES: { html: true },
       ADD_ATTR: ['align', 'checked', 'disabled', 'start', 'colspan', 'rowspan'],
     });
-    const view = tab.pane.preview;
-    view.innerHTML = clean;
-    decorateAlerts(view);
-    decorateHeadings(view);
+    decorateAlerts(node);
+    decorateHeadings(node);
+    decorateCode(node);
+    markTaskLists(node);
+    return node;
+  }
+
+  function render(tab) {
+    if (tab.kind === 'slides') return;              // slide tabs live in an iframe, not here
+    const view = renderInto(tab.pane.preview, tab.pane.editor.value);
     decorateLinks(view, tab);
-    decorateCode(view);
     decorateTaskLists(view, tab);
     decorateImages(view, tab);
     updateStatus();
@@ -826,19 +856,35 @@
   // in slides/slides.js; this side only assembles the file. Those three assets come from
   // the md2slides companion tool, which builds decks from the command line off the same
   // copies — which is why both routes produce identical output.
+  //
+  // The three helpers below are shared with "Save as HTML" further down.
+
+  // Embedded assets: served from the virtual origin by the host, or straight off the file
+  // system when this page is opened in a plain browser for debugging.
+  const grabAsset = async p => {
+    const r = await fetch(p);
+    if (!r.ok) throw new Error(tr('error.asset', p));
+    return r.text();
+  };
+
+  const escAttr = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  // Fill a {{PLACEHOLDER}} template. One pass, and in function form — a plain
+  // String.replace would treat $& / $1 inside the asset contents as substitution
+  // patterns, and a series of them would only ever replace the first {{TITLE}}.
+  // Both builders come through here, so that trap has only one place left to live.
+  const fill = (template, vals) =>
+    template.replace(/\{\{(\w+)\}\}/g, (m, k) => (k in vals ? vals[k] : m));
+
   let slidesAssets = null;
   async function loadSlidesAssets() {
     if (slidesAssets) return slidesAssets;
-    const grab = async p => {
-      const r = await fetch(p);
-      if (!r.ok) throw new Error(tr('error.asset', p));
-      return r.text();
-    };
     const [template, css, runtime, marked] = await Promise.all([
-      grab('slides/template.html'),
-      grab('slides/slides.css'),
-      grab('slides/slides.js'),
-      grab('vendor/marked.min.js'),
+      grabAsset('slides/template.html'),
+      grabAsset('slides/slides.css'),
+      grabAsset('slides/slides.js'),
+      grabAsset('vendor/marked.min.js'),
     ]);
     slidesAssets = { template, css, runtime, marked };
     return slidesAssets;
@@ -852,20 +898,15 @@
 
   async function buildSlides(text, title) {
     const a = await loadSlidesAssets();
-    const esc = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;')
-      .replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const vals = {
+    return fill(a.template, {
       LANG: state.lang,
-      TITLE: esc(title),
+      TITLE: escAttr(title),
       SPLIT: 'h3',
       CSS: a.css,
       MARKDOWN: text.replace(/<\/script/gi, '<\\/script'),
       MARKED: a.marked,
       RUNTIME: a.runtime,
-    };
-    // One pass, and in function form — a plain String.replace would treat $& / $1 inside
-    // the asset contents as substitution patterns.
-    return a.template.replace(/\{\{(\w+)\}\}/g, (m, k) => (k in vals ? vals[k] : m));
+    });
   }
 
   // Pressing "Slides" or "Export" while on a slide tab acts on its source tab.
@@ -899,8 +940,12 @@
       flash(tr('flash.exported', r.name));
       return;
     }
+    downloadFile(name, html);
+  }
 
-    // Browser fallback: download
+  // No native shell (the page opened directly in a browser for debugging): hand the file
+  // to the browser instead of to a save dialog.
+  function downloadFile(name, html) {
     const url = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
     const a = Object.assign(document.createElement('a'), { href: url, download: name });
     a.click();
@@ -1018,6 +1063,162 @@
     activateTab(deck.id);
   }
 
+  /* ==================== Saving as a document (HTML / PDF) ====================
+   * Not a deck: a snapshot of the document exactly as the preview renders it. The whole
+   * of style.css is inlined rather than a trimmed-down export stylesheet — the app-chrome
+   * rules match nothing in a bare document, and one stylesheet means the exported file
+   * can never drift from what the app shows. All nine themes travel with it, so writing
+   * data-skin on <html> is all it takes to keep the colours the user picked.
+   */
+
+  // export.html is the page skeleton: <html> attributes, the two <style> blocks and the
+  // article the body drops into. It deliberately carries no comment naming a placeholder,
+  // because fill() would substitute it there too — the first draft shipped style.css twice
+  // that way. Keep any explanation here instead.
+  let docAssets = null;
+  async function loadDocAssets() {
+    if (docAssets) return docAssets;
+    const [template, css] = await Promise.all([
+      grabAsset('export.html'),
+      grabAsset('style.css'),
+    ]);
+    docAssets = { template, css };
+    return docAssets;
+  }
+
+  // Local images become data URIs, so what gets sent really is a single file. Past the
+  // budget the rest keep their relative paths: a broken link beats a 200 MB attachment.
+  const INLINE_IMAGE_BUDGET = 32 * 1024 * 1024;
+
+  async function inlineImages(root, tab) {
+    if (!tab.base) return 0;
+    let budget = INLINE_IMAGE_BUDGET, skipped = 0;
+    for (const img of root.querySelectorAll('img')) {
+      const src = img.getAttribute('src') || '';
+      if (!src || isAbsolute(src)) continue;
+      let blob;
+      try {
+        const r = await fetch(new URL(encodeURI(src), tab.base).href);
+        if (!r.ok) continue;                    // missing on disk: leave the relative path
+        blob = await r.blob();
+      } catch {
+        continue;
+      }
+      const cost = Math.ceil(blob.size * 4 / 3);   // base64 overhead
+      if (cost > budget) { skipped++; continue; }
+      try {
+        img.src = await new Promise((res, rej) => {
+          const fr = new FileReader();
+          fr.onload = () => res(fr.result);
+          fr.onerror = () => rej(fr.error);
+          fr.readAsDataURL(blob);
+        });
+        budget -= cost;
+      } catch { /* unreadable: leave the relative path */ }
+    }
+    return skipped;
+  }
+
+  async function buildDocument(text, title, tab) {
+    const a = await loadDocAssets();
+    const root = document.documentElement;
+    // renderInto() only, not render(): the app-only decorations (live checkboxes, links
+    // that open tabs, images pointed at the virtual origin) have no meaning in a file.
+    const box = renderInto(document.createElement('div'), text);
+    const skipped = await inlineImages(box, tab);
+    if (skipped) flash(tr('flash.imagesTooBig'));
+    return fill(a.template, {
+      LANG: state.lang,
+      SKIN: root.dataset.skin || 'github-light',
+      DARK: root.dataset.dark || '0',
+      TITLE: escAttr(title),
+      CSS: a.css,
+      BODY: box.innerHTML,
+    });
+  }
+
+  // `path` is only ever passed by src/test/test.py: given one the host writes straight
+  // away instead of opening a save dialog, which CDP cannot click.
+  async function exportDocument(tab, path) {
+    tab = sourceOf(tab);
+    if (!tab) return;
+    const text = tab.pane.editor.value;
+    if (!text.trim()) { flash(tr('flash.emptyExport')); return; }
+
+    const stem = tab.name.replace(/\.[^.]+$/, '');
+    let html;
+    try {
+      html = await buildDocument(text, deckTitle(text, stem), tab);
+    } catch (e) {
+      alert(tr('error.buildDoc', e.message));
+      return;
+    }
+
+    const name = stem + '.html';
+    if (HOST.available) {
+      const r = await HOST.send('export',
+        { name, text: html, dir: tab.path || '', kind: 'doc', path: path || '' });
+      if (r.cancelled) return;
+      if (!r.ok) { alert(tr('error.exportFailed', r.error || tr('error.unknown'))); return; }
+      flash(tr('flash.exported', r.name));
+      return;
+    }
+    downloadFile(name, html);
+  }
+
+  /* ---------- PDF ----------
+   * The host prints this very page (PrintToPdfAsync), so the @media print rules in
+   * style.css are what shapes the output and the tab being exported has to be the visible
+   * one. A dark theme would come out as pale grey text on white paper — backgrounds are
+   * one thing, but --fg is still the theme's — so the skin is dropped for the duration:
+   * :root carrying no data-skin *is* GitHub Light (see the top of style.css).
+   */
+  let forcingLight = 0;
+
+  function forceLightSkin() {
+    const root = document.documentElement;
+    const skin = root.dataset.skin, dark = root.dataset.dark;
+    delete root.dataset.skin;
+    root.dataset.dark = '0';
+    forcingLight++;
+    return () => {
+      forcingLight--;
+      if (skin === undefined) delete root.dataset.skin; else root.dataset.skin = skin;
+      if (dark === undefined) delete root.dataset.dark; else root.dataset.dark = dark;
+    };
+  }
+
+  // Ctrl+P lands on the same stylesheet, so give it the same treatment. Printing to PDF
+  // may raise these events too; the guard keeps that from restoring the theme out from
+  // under exportPdf's own restore, which would leave the app stuck in the light palette.
+  let printRestore = null;
+  window.addEventListener('beforeprint', () => {
+    if (!forcingLight) printRestore = forceLightSkin();
+  });
+  window.addEventListener('afterprint', () => {
+    if (printRestore) { printRestore(); printRestore = null; }
+  });
+
+  async function exportPdf(tab, path) {
+    tab = sourceOf(tab);
+    if (!tab) return;
+    if (!tab.pane.editor.value.trim()) { flash(tr('flash.emptyExport')); return; }
+    if (tab.id !== state.activeId) activateTab(tab.id);
+
+    const name = tab.name.replace(/\.[^.]+$/, '') + '.pdf';
+    if (!HOST.available) { window.print(); return; }   // browser fallback: print to PDF by hand
+
+    const restore = forceLightSkin();
+    try {
+      const r = await HOST.send('printPdf', { name, dir: tab.path || '', path: path || '' });
+      if (r.cancelled) return;
+      if (!r.ok) { alert(tr('error.pdfFailed', r.error || tr('error.unknown'))); return; }
+      flash(tr('flash.savedPdf', r.name));
+    } finally {
+      restore();
+    }
+  }
+
   function markSaved(tab, text, name) {
     tab.savedText = text;
     tab.dirty = false;
@@ -1127,6 +1328,36 @@
     });
   }
 
+  /* ==================== Dropdown menus ====================
+   * Theme, language, slides and save all use the same dropdown. Registering them here
+   * keeps "opening one closes the others", the click-anywhere-else handler and Escape as
+   * a single list, instead of one more branch in each of those three places per menu.
+   */
+
+  const MENUS = [];
+  function registerMenu(menu, caret) {
+    const entry = {
+      isOpen: () => !menu.hidden,
+      close: () => {
+        menu.hidden = true;
+        if (caret) caret.classList.remove('on');
+      },
+      toggle: () => {
+        const wasOpen = !menu.hidden;
+        closeMenus();
+        if (wasOpen) return;
+        menu.hidden = false;
+        if (caret) caret.classList.add('on');
+      },
+    };
+    MENUS.push(entry);
+    return entry;
+  }
+  const closeMenus = () => MENUS.forEach(m => m.close());
+  const anyMenuOpen = () => MENUS.some(m => m.isOpen());
+
+  document.addEventListener('click', closeMenus);
+
   /* ==================== Theme ==================== */
 
   // sw = the [background, accent] pair used for the menu swatch; the palettes themselves
@@ -1183,27 +1414,16 @@
       tick.className = 'tick';
       tick.textContent = '✓';
       b.append(sw, name, tick);
-      b.addEventListener('click', () => { applyTheme(t.id); closeThemeMenu(); });
+      b.addEventListener('click', () => { applyTheme(t.id); closeMenus(); });
       el.themeMenu.appendChild(b);
       if (t.id === 'auto') el.themeMenu.appendChild(
         Object.assign(document.createElement('div'), { className: 'theme-sep' }));
     }
   }
 
-  const themeMenuOpen = () => !el.themeMenu.hidden;
-  function closeThemeMenu() { el.themeMenu.hidden = true; }
+  const themeMenu = registerMenu(el.themeMenu);
 
-  el.theme.addEventListener('click', e => {
-    e.stopPropagation();
-    closeSlidesMenu();
-    closeLangMenu();
-    el.themeMenu.hidden = themeMenuOpen();
-  });
-  document.addEventListener('click', () => {
-    if (themeMenuOpen()) closeThemeMenu();
-    if (langMenuOpen()) closeLangMenu();
-    if (slidesMenuOpen()) closeSlidesMenu();
-  });
+  el.theme.addEventListener('click', e => { e.stopPropagation(); themeMenu.toggle(); });
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     if (document.documentElement.dataset.theme === 'auto') applyTheme('auto');
   });
@@ -1280,20 +1500,14 @@
       tick.className = 'tick';
       tick.textContent = '✓';
       b.append(name, tick);
-      b.addEventListener('click', () => { applyLang(l.id); closeLangMenu(); });
+      b.addEventListener('click', () => { applyLang(l.id); closeMenus(); });
       el.langMenu.appendChild(b);
     }
   }
 
-  const langMenuOpen = () => !el.langMenu.hidden;
-  function closeLangMenu() { el.langMenu.hidden = true; }
+  const langMenu = registerMenu(el.langMenu);
 
-  el.lang.addEventListener('click', e => {
-    e.stopPropagation();
-    closeSlidesMenu();
-    closeThemeMenu();
-    el.langMenu.hidden = langMenuOpen();
-  });
+  el.lang.addEventListener('click', e => { e.stopPropagation(); langMenu.toggle(); });
 
   /* ==================== Toolbar / shortcuts ==================== */
 
@@ -1302,39 +1516,33 @@
   el.save.addEventListener('click', () => { const t = activeTab(); if (t) saveTab(t); });
   el.toggleEditor.addEventListener('click', () => toggleEditor(activeTab()));
 
-  /* ---------- The slides button and its dropdown ---------- */
-
-  const slidesMenuOpen = () => !el.slidesMenu.hidden;
-  function closeSlidesMenu() {
-    el.slidesMenu.hidden = true;
-    el.slidesMore.classList.remove('on');
-  }
-
-  el.slides.addEventListener('click', () => { const t = activeTab(); if (t) openSlidesTab(t); });
-  el.slidesMore.addEventListener('click', e => {
-    e.stopPropagation();
-    if (slidesMenuOpen()) { closeSlidesMenu(); return; }
-    closeThemeMenu();
-    closeLangMenu();
-    el.slidesMenu.hidden = false;
-    el.slidesMore.classList.add('on');
-  });
-  el.slidesMenu.addEventListener('click', e => {
+  // Menu items act on the active tab; both dropdowns share this wiring.
+  const onMenuPick = (menu, actions) => menu.addEventListener('click', e => {
     const item = e.target.closest('.menu-item');
     if (!item) return;
-    closeSlidesMenu();
+    closeMenus();
     const t = activeTab();
-    if (!t) return;
-    if (item.dataset.act === 'preview') openSlidesTab(t);
-    else exportSlides(t);
+    const act = actions[item.dataset.act];
+    if (t && act) act(t);
   });
+
+  /* ---------- The save button and its dropdown ---------- */
+
+  const saveMenu = registerMenu(el.saveMenu, el.saveMore);
+  el.saveMore.addEventListener('click', e => { e.stopPropagation(); saveMenu.toggle(); });
+  onMenuPick(el.saveMenu, { html: exportDocument, pdf: exportPdf });
+
+  /* ---------- The slides button and its dropdown ---------- */
+
+  const slidesMenu = registerMenu(el.slidesMenu, el.slidesMore);
+  el.slides.addEventListener('click', () => { const t = activeTab(); if (t) openSlidesTab(t); });
+  el.slidesMore.addEventListener('click', e => { e.stopPropagation(); slidesMenu.toggle(); });
+  onMenuPick(el.slidesMenu, { preview: openSlidesTab, export: exportSlides });
 
   document.addEventListener('keydown', e => {
     const ctrl = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
-    if (e.key === 'Escape' && themeMenuOpen()) { e.preventDefault(); closeThemeMenu(); return; }
-    if (e.key === 'Escape' && langMenuOpen()) { e.preventDefault(); closeLangMenu(); return; }
-    if (e.key === 'Escape' && slidesMenuOpen()) { e.preventDefault(); closeSlidesMenu(); return; }
+    if (e.key === 'Escape' && anyMenuOpen()) { e.preventDefault(); closeMenus(); return; }
     if (ctrl && !e.shiftKey && key === 's') { e.preventDefault(); const t = activeTab(); if (t) saveTab(t); return; }
     if (ctrl && key === 'o') { e.preventDefault(); openFiles(); return; }
     // Must exclude shift, or Ctrl+Shift+E (export) gets eaten by the editor toggle first.
@@ -1345,6 +1553,12 @@
     }
     if (ctrl && e.shiftKey && key === 'e') {
       e.preventDefault(); const t = activeTab(); if (t) exportSlides(t); return;
+    }
+    if (ctrl && e.shiftKey && key === 'h') {
+      e.preventDefault(); const t = activeTab(); if (t) exportDocument(t); return;
+    }
+    if (ctrl && e.shiftKey && key === 'd') {
+      e.preventDefault(); const t = activeTab(); if (t) exportPdf(t); return;
     }
     if (ctrl && !e.shiftKey && key === 'p') { e.preventDefault(); window.print(); return; }
     if ((ctrl && (key === 't' || key === 'n')) || (e.altKey && key === 'n')) {
@@ -1577,8 +1791,11 @@
     reportTitle();
   })();
 
-  // For src/test/test.py: exporting slides opens a native save dialog that CDP cannot
-  // click, so the tests call these directly and exercise the real code rather than a
-  // reimplementation of it.
-  window.__mdv = { buildSlides, deckTitle, openSlidesTab, activeTab, applyLang, state };
+  // For src/test/test.py: every export opens a native save dialog that CDP cannot click,
+  // so the tests call these directly (the exporters take a path that skips the dialog)
+  // and exercise the real code rather than a reimplementation of it.
+  window.__mdv = {
+    buildSlides, buildDocument, deckTitle, openSlidesTab,
+    exportDocument, exportPdf, activeTab, applyLang, state,
+  };
 })();

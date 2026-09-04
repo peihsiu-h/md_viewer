@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="{{LANG}}" data-skin="{{SKIN}}" data-dark="{{DARK}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+{{CSS}}
+</style>
+<style>
+/* Undo the app shell: the stylesheet above lays the window out as a fixed-height flex
+   column with hidden overflow, which a standalone document must not inherit. */
+html, body { height: auto; }
+body {
+  display: block;
+  overflow: visible;
+  margin: 0;
+  padding: 40px 24px;
+  font-size: 15px;
+}
+.doc {
+  max-width: 860px;
+  margin: 0 auto;
+}
+@media print {
+  body { padding: 0; }
+  .doc { max-width: none; }
+}
+</style>
+</head>
+<body>
+<article class="doc markdown-body">
+{{BODY}}
+</article>
+</body>
+</html>

@@ -31,8 +31,10 @@ MdViewer.exe a.md b.md      # open files directly; can also be set as the defaul
 | Save back to the original file | `Ctrl+S` |
 | Switch tabs | `Alt+1`–`Alt+9`, `Ctrl+Tab` |
 | Print preview | `Ctrl+P` |
+| Save a copy as HTML | the `▾` next to "Save" → "Save as HTML…", or `Ctrl+Shift+H` |
+| Save a copy as PDF | the `▾` next to "Save" → "Save as PDF…", or `Ctrl+Shift+D` |
 | Preview slides in a tab | "Slides" in the toolbar, or `Ctrl+Shift+P` |
-| Export slides as HTML | the `▾` next to "Slides" → "Export as HTML…", or `Ctrl+Shift+E` |
+| Export slides as HTML | the `▾` next to "Slides" → "Export slides as HTML…", or `Ctrl+Shift+E` |
 
 Dragging files in loads them into the current tab if it is blank, and otherwise opens new
 tabs — drop several files and you get several tabs.
@@ -64,13 +66,20 @@ editor on the left at any time.
   **Syntax highlighting recolours with the theme.**
 - **English / 正體中文 interface** (the `🌐` button), defaulting to your system language
   and remembered in `session.json`.
+- **A document can be handed on as HTML or PDF** (the `▾` next to "Save"):
+  - "Save as HTML…" (`Ctrl+Shift+H`) writes the document exactly as the preview shows it,
+    in **one self-contained file** — the stylesheet is inlined and **relative-path images
+    are embedded**, so it can simply be emailed. It keeps the theme you are using.
+  - "Save as PDF…" (`Ctrl+Shift+D`) prints through the WebView2 engine, so there is no
+    print dialog to sit through. The PDF is **always light**, whatever the current theme,
+    and the paper size follows your Windows region (A4, or Letter in North America).
 - **Markdown converts to slides**, with both routes sharing one output:
   - "Slides" (`Ctrl+Shift+P`) **pages through the deck in a new tab** without saving
     first. Arrow keys page, `O` shows an overview, `S` reveals speaker notes. Edit the
     Markdown, press it again, and the same tab regenerates and stays on the slide you
     were on.
-  - `▾` → "Export as HTML…" (`Ctrl+Shift+E`) writes a single self-contained HTML file
-    with no external dependencies — mail it to someone or print it to PDF.
+  - `▾` → "Export slides as HTML…" (`Ctrl+Shift+E`) writes a single self-contained HTML
+    file with no external dependencies — mail it to someone or print it to PDF.
   - `##` starts a section, `###` starts a slide, and `::: cols` / `::: card` / `::: note`
     handle layout. A `> Notes:` blockquote becomes a speaker note shown only when `S` is
     pressed. See [Slide syntax](#slide-syntax) below.
@@ -142,7 +151,8 @@ This uses the `csc.exe` that ships with Windows — no Visual Studio, no .NET SD
 
 ```
 src\Program.cs   native shell: window, file I/O, drag and drop, the bridge to the web side
-src\web\         the UI, embedded into the exe (index.html / style.css / app.js + vendor)
+src\web\         the UI, embedded into the exe (index.html / style.css / app.js + vendor,
+                 and export.html, the "Save as HTML" template)
 src\web\slides\  slide template and runtime (see the note below)
 src\lib\         WebView2 components, also embedded (fetched, not stored in this repo)
 src\app.ico      application icon (produced by make-icon.ps1)
