@@ -32,6 +32,7 @@
       <button class="menu-item" data-act="export" type="button" data-i18n="menu.export"></button>
     </div>
   </div>
+  <button id="btn-find" class="icon-btn" data-i18n-title="toolbar.find">🔍</button>
   <div id="lang-wrap">
     <button id="btn-lang" class="icon-btn" data-i18n-title="toolbar.lang">🌐</button>
     <div id="lang-menu" hidden></div>
@@ -42,7 +43,32 @@
   </div>
 </div>
 
-<div id="panes"></div>
+<div id="panes">
+  <!-- One find bar for the whole window, acting on the active tab — the way a browser does
+       it. Preview matches are drawn with the CSS Custom Highlight API, so nothing in the
+       rendered DOM is touched; source matches are painted on the editor's mirror layer. -->
+  <div id="findbar" hidden>
+    <div class="find-row">
+      <input id="find-input" type="text" spellcheck="false" data-i18n-placeholder="find.placeholder">
+      <span id="find-count"></span>
+      <button id="find-prev" class="icon-btn" type="button" data-i18n-title="find.prev">∧</button>
+      <button id="find-next" class="icon-btn" type="button" data-i18n-title="find.next">∨</button>
+      <button id="find-close" class="icon-btn" type="button" data-i18n-title="find.close">✕</button>
+    </div>
+    <div class="find-row">
+      <div id="find-scope">
+        <button class="seg" type="button" data-scope="source" data-i18n="find.source"></button>
+        <button class="seg" type="button" data-scope="preview" data-i18n="find.preview"></button>
+      </div>
+      <button id="find-case" class="tool-btn" type="button" data-i18n-title="find.case">Aa</button>
+    </div>
+    <div class="find-row" id="find-replace-row" hidden>
+      <input id="replace-input" type="text" spellcheck="false" data-i18n-placeholder="find.replacePlaceholder">
+      <button id="replace-one" class="tool-btn" type="button" data-i18n="find.replaceOne"></button>
+      <button id="replace-all" class="tool-btn" type="button" data-i18n="find.replaceAll"></button>
+    </div>
+  </div>
+</div>
 
 <div id="statusbar">
   <span id="st-name">—</span>
@@ -67,6 +93,11 @@
 <template id="pane-tpl">
   <div class="pane">
     <div class="editor-wrap">
+      <!-- Mirror layer: the same text with the same metrics, sitting under a transparent
+           textarea, so search hits can be painted. A textarea cannot be highlighted any
+           other way — its text is not in the DOM, and Chromium does not even draw its own
+           selection once it loses focus. -->
+      <div class="editor-marks" aria-hidden="true"></div>
       <textarea class="editor" spellcheck="false" data-i18n-placeholder="editor.placeholder"></textarea>
     </div>
     <div class="divider" data-i18n-title="divider.title"></div>

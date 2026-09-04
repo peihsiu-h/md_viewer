@@ -30,6 +30,8 @@ MdViewer.exe a.md b.md      # open files directly; can also be set as the defaul
 | Hide / show the editor | the translucent `‹‹` `››` button on the divider, "Editor" in the toolbar, or `Ctrl+E` |
 | Save back to the original file | `Ctrl+S` |
 | Switch tabs | `Alt+1`–`Alt+9`, `Ctrl+Tab` |
+| Find | `Ctrl+F`, or `🔍` in the toolbar; `Enter` / `Shift+Enter` or `F3` step, `Esc` closes |
+| Replace | `Ctrl+H` (source only) |
 | Print preview | `Ctrl+P` |
 | Save a copy as HTML | the `▾` next to "Save" → "Save as HTML…", or `Ctrl+Shift+H` |
 | Save a copy as PDF | the `▾` next to "Save" → "Save as PDF…", or `Ctrl+Shift+D` |
@@ -66,6 +68,11 @@ editor on the left at any time.
   **Syntax highlighting recolours with the theme.**
 - **English / 正體中文 interface** (the `🌐` button), defaulting to your system language
   and remembered in `session.json`.
+- **Find, in either half** (`Ctrl+F`). The bar carries a **Source / Preview** switch:
+  searching the source finds Markdown syntax itself (`](`, `##`), searching the preview
+  finds the words you are reading, and it keeps working with the editor collapsed. Every
+  match is highlighted, the current one more strongly, and `Ctrl+H` adds replace — on the
+  source, since the preview is a rendered result.
 - **A document can be handed on as HTML or PDF** (the `▾` next to "Save"):
   - "Save as HTML…" (`Ctrl+Shift+H`) writes the document exactly as the preview shows it,
     in **one self-contained file** — the stylesheet is inlined and **relative-path images

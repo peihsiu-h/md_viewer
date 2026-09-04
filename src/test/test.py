@@ -137,6 +137,39 @@ def click_tab(cdp, title):
            ".find(t=>t.textContent.includes(%s)).click()" % json.dumps(title))
 
 
+def set_editor(cdp, text):
+    """Type into the active tab's editor the way the app sees it (input -> render)."""
+    cdp.ev("""(() => {
+      const e = document.querySelector('.pane:not([hidden]) .editor');
+      e.value = %s;
+      e.dispatchEvent(new Event('input', {bubbles: true}));
+    })()""" % json.dumps(text))
+
+
+def set_query(cdp, text):
+    cdp.ev("""(() => {
+      const i = document.querySelector('#find-input');
+      i.value = %s;
+      i.dispatchEvent(new Event('input', {bubbles: true}));
+    })()""" % json.dumps(text))
+    time.sleep(0.35)
+
+
+def find_state(cdp):
+    """Everything the find checks need, in one round trip."""
+    return cdp.ev("""(() => {
+      const f = window.__mdv.find, ed = window.__mdv.activeTab().pane.editor;
+      const hl = (window.CSS && CSS.highlights) || null;
+      const size = k => (hl && hl.get(k)) ? hl.get(k).size : 0;
+      return {
+        n: f.matches.length, i: f.index, scope: f.scope, cs: f.caseSensitive,
+        count: document.querySelector('#find-count').textContent,
+        sel: ed.value.slice(ed.selectionStart, ed.selectionEnd),
+        all: size('find'), one: size('find-current'),
+      };
+    })()""")
+
+
 def pick_theme(cdp, theme_id):
     """Choose a theme the way a user would: open the menu, click the entry."""
     cdp.ev("document.querySelector('#btn-theme').click()")
@@ -925,6 +958,175 @@ def main():
       document.dispatchEvent(new KeyboardEvent('keydown', {key:'s', ctrlKey:true, bubbles:true}));
       return document.querySelector('#st-info').textContent.includes('Export');
     })()"""))
+
+    # ---------- Find / replace ----------
+    # A tab of its own with known content, so the counts do not depend on fixtures the
+    # earlier checks have been editing. Source and preview deliberately disagree:
+    # "[alpha link](./alpha.md)" holds two "alpha" in the source but only one on screen,
+    # and "**bou**ndary" is a word that exists only once the Markdown is rendered.
+    FIND_MD = ("# Find test\n\nalpha beta alpha\n\nALPHA gamma\n\n"
+               "[alpha link](./alpha.md)\n\ncross **bou**ndary word\n\n"
+               + "filler line\n\n" * 40 + "omega tail\n")
+    cdp.ev("document.querySelector('#new-tab').click()")
+    time.sleep(0.5)
+    set_editor(cdp, FIND_MD)
+    time.sleep(0.8)
+
+    st = cdp.ev("""(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown',
+        {key:'f', ctrlKey:true, bubbles:true}));
+      return {open: !document.querySelector('#findbar').hidden,
+              focused: document.activeElement.id};
+    })()""")
+    check("Ctrl+F opens the find bar and focuses the box",
+          st["open"] and st["focused"] == "find-input", st)
+
+    set_query(cdp, "alpha")
+    st = find_state(cdp)
+    check("the source is searched case-insensitively by default",
+          st["n"] == 5 and st["count"] == "1/5", st)
+    check("the first match is selected in the editor", st["sel"] == "alpha", st["sel"])
+
+    # The mirror layer is the only way a textarea can show a hit, and it only lines up if
+    # it wraps exactly like the textarea does — hence the scrollHeight comparison.
+    mk = cdp.ev("""(() => {
+      const p = document.querySelector('.pane:not([hidden])');
+      const ed = p.querySelector('.editor'), m = p.querySelector('.editor-marks');
+      const cur = m.querySelector('mark.current');
+      return {marks: m.querySelectorAll('mark').length,
+              current: m.querySelectorAll('mark.current').length,
+              text: cur ? cur.textContent : null,
+              dh: Math.abs(ed.scrollHeight - m.scrollHeight)};
+    })()""")
+    check("every source match is painted on the editor's mirror layer",
+          mk["marks"] == 5 and mk["current"] == 1 and mk["text"] == "alpha", mk)
+    check("the mirror wraps exactly like the textarea it sits under", mk["dh"] <= 2, mk["dh"])
+
+    cdp.ev("""document.querySelector('#find-input').dispatchEvent(
+      new KeyboardEvent('keydown', {key:'Enter', bubbles:true}))""")
+    time.sleep(0.3)
+    st = find_state(cdp)
+    check("Enter steps to the next match", st["i"] == 1 and st["count"] == "2/5", st)
+
+    for _ in range(2):
+        cdp.ev("""document.querySelector('#find-input').dispatchEvent(
+          new KeyboardEvent('keydown', {key:'Enter', shiftKey:true, bubbles:true}))""")
+        time.sleep(0.25)
+    st = find_state(cdp)
+    check("Shift+Enter goes back and wraps round the end", st["i"] == 4, st)
+
+    cdp.ev("document.querySelector('#find-case').click()")
+    time.sleep(0.3)
+    st = find_state(cdp)
+    check("matching case drops ALPHA from the count", st["cs"] and st["n"] == 4, st)
+    cdp.ev("document.querySelector('#find-case').click()")
+    time.sleep(0.3)
+
+    set_query(cdp, "omega")
+    time.sleep(0.3)
+    top = cdp.ev("document.querySelector('.pane:not([hidden]) .editor').scrollTop")
+    check("the source scroll is driven off the mirror, with no focus stealing",
+          top > 0 and cdp.ev("document.activeElement.id") == "find-input", top)
+    set_query(cdp, "alpha")
+
+    cdp.ev("document.querySelector('#find-scope .seg[data-scope=\"preview\"]').click()")
+    time.sleep(0.4)
+    st = find_state(cdp)
+    check("switching to the preview searches the rendered text instead",
+          st["scope"] == "preview" and st["n"] == 4, st)
+    check("every preview match is highlighted, the current one on its own layer",
+          st["all"] == 4 and st["one"] == 1, st)
+
+    set_query(cdp, "boundary")
+    st = find_state(cdp)
+    check("a match spanning two text nodes becomes one range",
+          st["n"] == 1 and st["all"] == 1, st)
+
+    set_query(cdp, "omega")
+    time.sleep(0.4)
+    top = cdp.ev("document.querySelector('.pane:not([hidden]) .preview-wrap').scrollTop")
+    check("stepping in the preview scrolls the match into view", top > 0, top)
+
+    # Re-rendering destroys the text nodes the ranges point at; render() has to rebuild them.
+    set_query(cdp, "alpha")
+    set_editor(cdp, FIND_MD + "\nalpha extra\n")
+    time.sleep(0.9)
+    st = find_state(cdp)
+    check("preview highlights are rebuilt after a re-render",
+          st["n"] == 5 and st["all"] == 5, st)
+
+    cdp.ev("""document.dispatchEvent(new KeyboardEvent('keydown',
+      {key:'Escape', bubbles:true}))""")
+    time.sleep(0.3)
+    st = cdp.ev("""(() => ({
+      hidden: document.querySelector('#findbar').hidden,
+      all: (window.CSS && CSS.highlights && CSS.highlights.get('find')) ? 1 : 0,
+      marks: document.querySelectorAll('.pane:not([hidden]) .editor-marks mark').length,
+    }))()""")
+    check("Esc closes the find bar and clears both highlight layers",
+          st["hidden"] and st["all"] == 0 and st["marks"] == 0, st)
+
+    # ---------- Replace ----------
+    set_editor(cdp, "aa bb aa cc aa\n")
+    time.sleep(0.6)
+    st = cdp.ev("""(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown',
+        {key:'h', ctrlKey:true, bubbles:true}));
+      return {row: !document.querySelector('#find-replace-row').hidden,
+              scope: window.__mdv.find.scope};
+    })()""")
+    check("Ctrl+H opens the replace row and forces the source scope",
+          st["row"] and st["scope"] == "source", st)
+
+    set_query(cdp, "aa")
+    cdp.ev("""(() => {
+      const i = document.querySelector('#replace-input');
+      i.value = 'X';
+      document.querySelector('#replace-one').click();
+    })()""")
+    time.sleep(0.6)
+    st = cdp.ev("""(() => ({
+      val: window.__mdv.activeTab().pane.editor.value,
+      dirty: !!document.querySelector('.tab.active.dirty'),
+    }))()""")
+    check("Replace rewrites just the current match",
+          st["val"].startswith("X bb aa cc aa") and st["dirty"], st)
+
+    cdp.ev("document.querySelector('#replace-all').click()")
+    time.sleep(0.6)
+    val = cdp.ev("window.__mdv.activeTab().pane.editor.value")
+    check("Replace all rewrites the rest", val.startswith("X bb X cc X"), val)
+
+    # Ctrl+Shift+H is still "Save as HTML", not replace. Safe to press only because the
+    # tab is empty: exportDocument() flashes and returns before any save dialog opens.
+    cdp.ev("""document.dispatchEvent(new KeyboardEvent('keydown',
+      {key:'Escape', bubbles:true}))""")
+    set_editor(cdp, "")
+    time.sleep(0.5)
+    st = cdp.ev("""(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown',
+        {key:'H', ctrlKey:true, shiftKey:true, bubbles:true}));
+      return {info: document.querySelector('#st-info').textContent,
+              findbar: document.querySelector('#findbar').hidden};
+    })()""")
+    time.sleep(0.4)
+    check("Ctrl+Shift+H still reaches Save as HTML rather than replace",
+          "nothing to export" in st["info"] and st["findbar"], st)
+
+    cdp.ev("document.querySelector('.tab.active .close').click()")
+    time.sleep(0.4)
+    click_tab(cdp, "(slides)")
+    time.sleep(0.6)
+    st = cdp.ev("""(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown',
+        {key:'f', ctrlKey:true, bubbles:true}));
+      return {hidden: document.querySelector('#findbar').hidden,
+              info: document.querySelector('#st-info').textContent};
+    })()""")
+    check("slide tabs say so instead of opening the find bar",
+          st["hidden"] and "cannot be searched" in st["info"], st)
+    click_tab(cdp, "demo.md")
+    time.sleep(0.5)
 
     # ---------- Session file (close and reopen restores tabs) ----------
     sess = os.path.join(os.environ["LOCALAPPDATA"], "MdViewer", "session.json")

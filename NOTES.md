@@ -3,7 +3,7 @@
 Finished 2026-07-21. External-change detection, a session file, nine themes and slide
 export followed on 2026-07-28; previewing slides in a tab on 2026-07-31; the
 English / 正體中文 interface on 2026-08-12; saving a document as HTML or PDF on
-2026-09-03.
+2026-09-03; find and replace on 2026-09-04.
 
 What follows is the *why* behind the design, and the traps hit getting there. Read this
 before changing anything. Usage lives in [README.md](README.md).
@@ -280,6 +280,43 @@ reading contents directly — only then saving needs a "save as".
 - **All four dropdowns register in one `MENUS` list.** Adding the save menu the old way
   meant editing four separate lists — each menu's open handler, the click-anywhere-else
   handler and Escape. `registerMenu()` / `closeMenus()` make it one line per menu.
+- **Find searches two different things, so it is written twice.** One bar for the whole
+  window (browsers do the same), acting on the active tab, with a Source / Preview switch.
+  - **The preview uses the CSS Custom Highlight API.** Matches are `Range` objects handed
+    to `CSS.highlights`, so the rendered DOM is never rewritten — wrapping hits in `<mark>`
+    would fight the re-render that runs 130ms after every keystroke, and would leak into
+    "Save as HTML". What re-rendering *does* destroy is the text nodes those Ranges point
+    at, so `render()` calls `findRefresh()`; that is the only invalidation point. The
+    matches are found over the preview's text nodes flattened into one string, which is
+    what lets a hit straddling `<strong>` boundaries come back as a single Range.
+  - **The source needs a mirror layer, and the first attempt was wrong.** The obvious
+    approach — select the match with `setSelectionRange()` and hand focus back to the find
+    box — looks right in the DOM and shows *nothing at all*: **Chromium stops painting a
+    textarea's selection the moment it loses focus**, and `::selection` cannot override
+    that. `.editor-marks` is therefore a div under a transparent textarea holding the same
+    text, where hits are ordinary `<mark>` elements.
+    - `.editor, .editor-marks` share **one** rule for padding, font, line-height, tab-size
+      and wrapping. Put a value in only one of them and every mark past the first wrapped
+      line drifts off its word. `test.py` compares the two `scrollHeight`s for exactly this.
+    - The textarea reserves room for its scrollbar; `syncMarkGutter()` gives the mirror the
+      same gutter as `padding-right`, or the two wrap at different widths.
+    - CSS drops a line break at the very end of a block, but a textarea still shows that
+      last empty line, so the mirror gets a trailing space when the text ends in a newline.
+      Without it the mirror is exactly one line short.
+    - The mirror also removes the need to borrow focus: `mark.current.offsetTop` says where
+      to scroll, so nothing has to touch focus and typing in the find box is never
+      interrupted. The selection is still set, so closing the bar leaves the caret there.
+  - Replacing only applies to the source — the preview is a rendered result, not an input —
+    and goes through `setEditorValue()`, which already owns the dirty flag, the re-render,
+    the preview's scroll position and the session write.
+  - **`Ctrl+H` (replace) and `Ctrl+Shift+H` ("Save as HTML") both check shift explicitly**,
+    the same trap as `Ctrl+P` / `Ctrl+Shift+P`. The test for it presses `Ctrl+Shift+H` on
+    an *empty* tab on purpose: `exportDocument()` bails out with a flash before it can open
+    a save dialog, which is the only way to exercise that pair without hanging the WebView.
+- **The tab strip is the only thing in the toolbar that gives way.** It used to be
+  `max-width: calc(100% - 348px)` — a hard-coded reservation that went stale the moment a
+  button was added, leaving the labels wrapping onto two lines. `#tabs` now shrinks and
+  scrolls while every button is `flex: 0 0 auto`.
 - **Dialogs are hand-rolled rather than native `confirm()`**: `confirm()` blocks the entire
   WebView synchronously, taking CDP down with it, which makes that path permanently
   untestable. The in-page modal (`#ext-dialog`) can also show the filename and a red
@@ -288,7 +325,7 @@ reading contents directly — only then saving needs a "save as".
 
 ## Verification
 
-`py src\test\test.py` — **123 end-to-end checks**. It generates its own fixtures and shuts
+`py src\test\test.py` — **143 end-to-end checks**. It generates its own fixtures and shuts
 the program down when finished.
 
 It launches `MdViewer.exe --dev` (which opens a remote debugging port on `127.0.0.1:9333`)
@@ -335,6 +372,9 @@ changing anything under `src\`.
   into `src\web\slides\` and rebuild. **Do not change only the copies here** — the
   command-line converter will drift away. The in-app preview and the export share one
   output, so both change together.
+- **Changing the editor's font, padding or wrapping**: it lives in the shared
+  `.editor, .editor-marks` rule in `style.css`. Changing one without the other silently
+  breaks the source search's highlighting.
 - **Changing how an exported document looks**: `src\web\export.html` holds only the
   standalone-page overrides — the app shell's flex/fixed-height layout undone, and the
   centred column. Everything else comes from the inlined `style.css`, so a change to the

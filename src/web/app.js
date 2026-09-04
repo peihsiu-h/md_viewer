@@ -23,6 +23,19 @@
     themeMenu: $('#theme-menu'),
     lang: $('#btn-lang'),
     langMenu: $('#lang-menu'),
+    find: $('#btn-find'),
+    findbar: $('#findbar'),
+    findInput: $('#find-input'),
+    findCount: $('#find-count'),
+    findPrev: $('#find-prev'),
+    findNext: $('#find-next'),
+    findClose: $('#find-close'),
+    findScope: $('#find-scope'),
+    findCase: $('#find-case'),
+    replaceRow: $('#find-replace-row'),
+    replaceInput: $('#replace-input'),
+    replaceOne: $('#replace-one'),
+    replaceAll: $('#replace-all'),
     fileInput: $('#file-input'),
     stName: $('#st-name'),
     stInfo: $('#st-info'),
@@ -72,6 +85,7 @@
       'toolbar.editorTitle': 'Hide/show the editor (Ctrl+E)',
       'toolbar.slidesTitle': 'Preview slides in a tab (Ctrl+Shift+P)',
       'toolbar.slidesMore': 'More slide actions',
+      'toolbar.find': 'Find (Ctrl+F)',
       'toolbar.theme': 'Theme',
       'toolbar.themeCurrent': 'Theme: {0}',
       'toolbar.lang': 'Language',
@@ -80,6 +94,18 @@
       'menu.export': '⭳ Export slides as HTML…',
       'menu.saveHtml': '⭳ Save as HTML…',
       'menu.savePdf': '⭳ Save as PDF…',
+      'find.placeholder': 'Find…',
+      'find.replacePlaceholder': 'Replace with…',
+      'find.prev': 'Previous match (Shift+Enter)',
+      'find.next': 'Next match (Enter)',
+      'find.close': 'Close (Esc)',
+      'find.case': 'Match case',
+      'find.source': 'Source',
+      'find.preview': 'Preview',
+      'find.count': '{0}/{1}',
+      'find.none': 'no matches',
+      'find.replaceOne': 'Replace',
+      'find.replaceAll': 'All',
       'dialog.title': 'File changed on disk',
       'dialog.body': '“{0}” has changed on disk. Load the latest version?',
       'dialog.warn': 'This tab has unsaved changes; reloading will discard them.',
@@ -114,6 +140,9 @@
       'editorToggle.hide': 'Hide the editor (Ctrl+E)',
       'editorToggle.show': 'Show the editor (Ctrl+E)',
       'flash.noEditor': 'Slide tabs have no editor',
+      'flash.noFind': 'Slide tabs cannot be searched',
+      'flash.replaced': 'Replaced {0}',
+      'flash.replacePreview': 'Replacing only works on the source',
       'flash.cantSave': 'Slide tabs cannot be saved — use “Export slides as HTML…”',
       'flash.saved': 'Saved {0}',
       'flash.downloaded': 'Downloaded {0}',
@@ -150,6 +179,7 @@
       'toolbar.editorTitle': '隱藏/展開編輯區 (Ctrl+E)',
       'toolbar.slidesTitle': '在分頁中預覽投影片 (Ctrl+Shift+P)',
       'toolbar.slidesMore': '投影片的其他動作',
+      'toolbar.find': '尋找 (Ctrl+F)',
       'toolbar.theme': '佈景主題',
       'toolbar.themeCurrent': '佈景主題：{0}',
       'toolbar.lang': '語言',
@@ -158,6 +188,18 @@
       'menu.export': '⭳ 匯出投影片 HTML…',
       'menu.saveHtml': '⭳ 另存 HTML…',
       'menu.savePdf': '⭳ 另存 PDF…',
+      'find.placeholder': '尋找…',
+      'find.replacePlaceholder': '取代成…',
+      'find.prev': '上一筆 (Shift+Enter)',
+      'find.next': '下一筆 (Enter)',
+      'find.close': '關閉 (Esc)',
+      'find.case': '區分大小寫',
+      'find.source': '原始碼',
+      'find.preview': '預覽',
+      'find.count': '{0}/{1}',
+      'find.none': '找不到',
+      'find.replaceOne': '取代',
+      'find.replaceAll': '全部',
       'dialog.title': '檔案已被其他程式修改',
       'dialog.body': '「{0}」在磁碟上的內容已經變更。要載入最新版本嗎？',
       'dialog.warn': '目前分頁有未儲存的修改，重新載入會蓋掉。',
@@ -192,6 +234,9 @@
       'editorToggle.hide': '隱藏編輯區 (Ctrl+E)',
       'editorToggle.show': '展開編輯區 (Ctrl+E)',
       'flash.noEditor': '投影片分頁沒有編輯區',
+      'flash.noFind': '投影片分頁不能搜尋',
+      'flash.replaced': '已取代 {0} 筆',
+      'flash.replacePreview': '取代只能用在原始碼',
       'flash.cantSave': '投影片分頁存不了，要存檔請用「匯出投影片 HTML…」',
       'flash.saved': '已儲存 {0}',
       'flash.downloaded': '已下載 {0}',
@@ -470,6 +515,8 @@
     decorateTaskLists(view, tab);
     decorateImages(view, tab);
     updateStatus();
+    // The preview's find Ranges pointed at the text nodes just replaced above.
+    if (tab.id === state.activeId) findRefresh();
   }
 
   // Content changed by the program rather than the user (e.g. ticking a task item).
@@ -492,6 +539,7 @@
     return {
       root: node,
       editor: $('.editor', node),
+      marks: $('.editor-marks', node),
       editorWrap: $('.editor-wrap', node),
       divider: $('.divider', node),
       previewWrap: $('.preview-wrap', node),
@@ -587,6 +635,7 @@
     // Arrow keys are handled by the runtime inside the iframe; without focus, no paging.
     if (tab.kind === 'slides') focusSlides(tab);
     else if (tab.editorVisible) tab.pane.editor.focus({ preventScroll: true });
+    if (find.open) { applyFindScope(); recompute(false); }   // the matches belong to a tab
     saveSession();
     checkExternal(tab);            // deliberately not awaited: don't let disk I/O slow the switch
   }
@@ -653,7 +702,10 @@
       to.scrollTop = (from.scrollTop / fMax) * tMax;
       tab.syncLock = Date.now() + 60;
     };
-    p.editor.addEventListener('scroll', () => sync(p.editor, p.previewWrap));
+    p.editor.addEventListener('scroll', () => {
+      p.marks.scrollTop = p.editor.scrollTop;      // the mirror rides along
+      sync(p.editor, p.previewWrap);
+    });
     p.previewWrap.addEventListener('scroll', () => sync(p.previewWrap, p.editor));
 
     // Divider drag
@@ -717,6 +769,8 @@
     tab.pane.editorToggle.style.left = tab.editorVisible ? `calc(${tab.ratio}% - 11px)` : '0';
     // The empty-tab drop hint covers only the preview side, so the editor stays clickable and typable.
     tab.pane.dropzone.style.left = tab.editorVisible ? `${tab.ratio}%` : '0';
+    // A new width may add or remove the editor's scrollbar; the mirror has to match it.
+    if (find.open) syncMarkGutter(tab);
   }
 
   function applyEditorVisibility(tab) {
@@ -1290,6 +1344,335 @@
     finally { tab.checking = false; }
   }
 
+  /* ==================== Find / replace ====================
+   * One bar for the whole window, acting on the active tab, the way a browser does it.
+   * Two search targets, because the two panes really are different things:
+   *   - 'source' searches the textarea. Its text is not in the DOM, so ::highlight() can
+   *     never reach it and the current match has to be an ordinary selection.
+   *   - 'preview' searches the rendered document through the CSS Custom Highlight API.
+   *     Matches are Ranges, so nothing is rewritten — wrapping hits in <mark> would fight
+   *     the re-render that runs 130ms after every keystroke, and would leak into "Save as
+   *     HTML". What re-rendering *does* destroy is the text nodes those Ranges point at,
+   *     which is why render() calls findRefresh(); that is the only invalidation point.
+   * Replacing only applies to the source: the preview is a rendered result, not an input.
+   */
+
+  const HL_ALL = 'find', HL_ONE = 'find-current';
+
+  const find = {
+    open: false,
+    replacing: false,
+    scope: 'source',                 // 'source' | 'preview'
+    query: '',
+    caseSensitive: false,
+    matches: [],                     // source: {start, end}; preview: Range
+    index: -1,
+  };
+
+  const findable = tab => !!tab && tab.kind !== 'slides';
+
+  // Every occurrence of needle in hay. A plain substring scan rather than a regex: there
+  // is nothing to escape, and "it looks for exactly what you typed" is what people expect.
+  function scan(hay, needle, caseSensitive) {
+    const out = [];
+    if (!needle) return out;
+    const h = caseSensitive ? hay : hay.toLowerCase();
+    const n = caseSensitive ? needle : needle.toLowerCase();
+    for (let i = h.indexOf(n); i !== -1; i = h.indexOf(n, i + n.length)) out.push(i);
+    return out;
+  }
+
+  // Flatten the preview's text nodes into one string, remembering where each node starts,
+  // so a match straddling nodes (a bold word mid-sentence) still comes back as one Range.
+  function previewText(root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    let text = '', node;
+    while ((node = walker.nextNode())) {
+      nodes.push({ node, at: text.length });
+      text += node.nodeValue;
+    }
+    return { text, nodes };
+  }
+
+  function rangeAt(nodes, start, end) {
+    const locate = pos => {
+      let lo = 0, hi = nodes.length - 1, best = 0;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (nodes[mid].at <= pos) { best = mid; lo = mid + 1; } else hi = mid - 1;
+      }
+      return best;
+    };
+    const a = locate(start), b = locate(end);
+    const r = document.createRange();
+    r.setStart(nodes[a].node, start - nodes[a].at);
+    r.setEnd(nodes[b].node, end - nodes[b].at);
+    return r;
+  }
+
+  function clearHighlights() {
+    if (!window.CSS || !CSS.highlights) return;
+    CSS.highlights.delete(HL_ALL);
+    CSS.highlights.delete(HL_ONE);
+  }
+
+  /* ---------- The editor's mirror layer ----------
+   * A textarea cannot be highlighted: its text is not in the DOM, ::highlight() cannot
+   * reach it, and Chromium stops painting even its own selection the moment it loses
+   * focus — so "select the match and hand focus back to the find box" shows nothing at
+   * all. The mirror is a div under the (transparent) textarea holding the same text with
+   * the same metrics, where the hits can simply be <mark>ed. It also tells us where the
+   * match landed, which is what removes the need to borrow focus in order to scroll.
+   */
+
+  // Past this many hits the marks are more noise than help, and building that many
+  // elements on every keystroke is not worth it: only the current one gets drawn.
+  const MARK_CAP = 2000;
+
+  // The textarea reserves room for its scrollbar and the mirror must reserve the same, or
+  // the two wrap at different widths and every mark after the first line drifts.
+  function syncMarkGutter(tab) {
+    const ed = tab.pane.editor;
+    tab.pane.marks.style.paddingRight = (16 + (ed.offsetWidth - ed.clientWidth)) + 'px';
+  }
+
+  function paintSourceMarks(tab) {
+    const mk = tab.pane.marks, text = tab.pane.editor.value;
+    syncMarkGutter(tab);
+    const cur = find.matches[find.index];
+    const list = find.matches.length > MARK_CAP ? (cur ? [cur] : []) : find.matches;
+    let html = '', at = 0;
+    for (const m of list) {
+      html += escAttr(text.slice(at, m.start))
+            + (m === cur ? '<mark class="current">' : '<mark>')
+            + escAttr(text.slice(m.start, m.end)) + '</mark>';
+      at = m.end;
+    }
+    // CSS drops a line break that sits at the very end of a block, but a textarea still
+    // shows that last empty line — without this the mirror comes out one line short.
+    mk.innerHTML = html + escAttr(text.slice(at)) + (text.endsWith('\n') ? ' ' : '');
+    mk.scrollTop = tab.pane.editor.scrollTop;
+  }
+
+  function clearSourceMarks() {
+    for (const t of state.tabs) {
+      if (t.kind !== 'slides' && t.pane.marks.firstChild) t.pane.marks.textContent = '';
+    }
+  }
+
+  function paintHighlights() {
+    if (!window.CSS || !CSS.highlights) return;
+    if (find.scope !== 'preview' || !find.matches.length) { clearHighlights(); return; }
+    const all = new Highlight();
+    for (const r of find.matches) all.add(r);   // .add(), not the spread: no argument cap
+    CSS.highlights.set(HL_ALL, all);
+    const cur = find.matches[find.index];
+    if (!cur) { CSS.highlights.delete(HL_ONE); return; }
+    const one = new Highlight(cur);
+    one.priority = 1;                           // has to win over the all-matches layer
+    CSS.highlights.set(HL_ONE, one);
+  }
+
+  // Recompute the match list without navigating anywhere. Deliberately touches neither
+  // focus nor the selection: this also runs while the user is typing in the editor.
+  function recompute(keepIndex) {
+    const tab = activeTab();
+    const prev = find.index;
+    find.matches = [];
+    find.index = -1;
+    clearHighlights();
+
+    if (find.open && findable(tab) && find.query) {
+      if (find.scope === 'source') {
+        const text = tab.pane.editor.value;
+        find.matches = scan(text, find.query, find.caseSensitive)
+          .map(at => ({ start: at, end: at + find.query.length }));
+      } else {
+        const flat = previewText(tab.pane.preview);
+        find.matches = scan(flat.text, find.query, find.caseSensitive)
+          .map(at => rangeAt(flat.nodes, at, at + find.query.length));
+      }
+    }
+    if (find.matches.length) {
+      find.index = (keepIndex && prev >= 0) ? Math.min(prev, find.matches.length - 1) : 0;
+    }
+    paintHighlights();
+    if (find.open && find.scope === 'source' && findable(tab)) paintSourceMarks(tab);
+    else clearSourceMarks();
+    updateFindCount();
+  }
+
+  // A re-render throws away the text nodes the preview Ranges point at, so they have to be
+  // rebuilt — but without stealing focus, or typing in the editor would jump to the box.
+  function findRefresh() {
+    if (find.open) recompute(true);
+  }
+
+  function scrollRangeIntoView(tab, range) {
+    const wrap = tab.pane.previewWrap;
+    const r = range.getBoundingClientRect();
+    if (!r.height && !r.width) return;
+    const box = wrap.getBoundingClientRect();
+    // Centre it, but only when it is actually out of view; scrollIntoView() would reach
+    // outside this container.
+    if (r.top < box.top + 8 || r.bottom > box.bottom - 8) {
+      wrap.scrollTop += (r.top - box.top) - wrap.clientHeight / 2 + r.height / 2;
+    }
+  }
+
+  function revealCurrent() {
+    const tab = activeTab();
+    const m = find.matches[find.index];
+    if (!m || !findable(tab)) { updateFindCount(); return; }
+    if (find.scope === 'source') {
+      const ed = tab.pane.editor, mk = tab.pane.marks;
+      if (!tab.editorVisible) toggleEditor(tab);      // no point marking what isn't shown
+      paintSourceMarks(tab);
+      ed.setSelectionRange(m.start, m.end);           // leaves the caret there once we close
+      // The mirror says where the match landed, so no focus is needed to scroll to it —
+      // borrowing focus back from the find box on every keystroke would fight with typing.
+      const cur = mk.querySelector('mark.current');
+      if (cur) {
+        const max = Math.max(0, ed.scrollHeight - ed.clientHeight);
+        ed.scrollTop = Math.max(0, Math.min(cur.offsetTop - ed.clientHeight / 2, max));
+        mk.scrollTop = ed.scrollTop;
+      }
+    } else {
+      paintHighlights();
+      scrollRangeIntoView(tab, m);
+    }
+    updateFindCount();
+  }
+
+  function step(d) {
+    if (!find.matches.length) return;
+    find.index = (find.index + d + find.matches.length) % find.matches.length;
+    revealCurrent();
+  }
+
+  function updateFindCount() {
+    const n = find.matches.length;
+    el.findCount.textContent = !find.query ? ''
+      : n ? tr('find.count', find.index + 1, n) : tr('find.none');
+    el.findInput.classList.toggle('no-match', !!find.query && !n);
+  }
+
+  function applyFindScope() {
+    for (const b of el.findScope.querySelectorAll('.seg')) {
+      b.classList.toggle('on', b.dataset.scope === find.scope);
+    }
+    el.findCase.classList.toggle('on', find.caseSensitive);
+  }
+
+  function openFind(replacing) {
+    const tab = activeTab();
+    if (!findable(tab)) { flash(tr('flash.noFind')); return; }
+    const wasOpen = find.open;
+    if (replacing) find.scope = 'source';        // replacing rewrites Markdown, so: source
+    find.replacing = !!replacing || (wasOpen && find.replacing);
+    el.replaceRow.hidden = !find.replacing;
+    find.open = true;
+    el.findbar.hidden = false;
+
+    // Seed from the editor's selection the first time, the way every find box does.
+    if (!wasOpen) {
+      const ed = tab.pane.editor;
+      const sel = ed.value.slice(ed.selectionStart, ed.selectionEnd);
+      if (sel && sel.length <= 200 && !/[\r\n]/.test(sel)) el.findInput.value = sel;
+    }
+    applyFindScope();
+    find.query = el.findInput.value;
+    recompute(false);
+    revealCurrent();               // may borrow focus for the editor, so focus the box after
+    el.findInput.focus();
+    el.findInput.select();
+  }
+
+  function closeFind() {
+    const tab = activeTab();
+    find.open = false;
+    find.replacing = false;
+    find.matches = [];
+    find.index = -1;
+    el.findbar.hidden = true;
+    el.replaceRow.hidden = true;
+    clearHighlights();
+    clearSourceMarks();
+    applyFindScope();
+    if (findable(tab) && tab.editorVisible) tab.pane.editor.focus({ preventScroll: true });
+  }
+
+  function replaceCurrent() {
+    const tab = activeTab();
+    if (!findable(tab) || find.scope !== 'source') { flash(tr('flash.replacePreview')); return; }
+    const m = find.matches[find.index];
+    if (!m) return;
+    const at = find.index;
+    const text = tab.pane.editor.value;
+    setEditorValue(tab, text.slice(0, m.start) + el.replaceInput.value + text.slice(m.end));
+    recompute(false);
+    // One match fewer, so the one that shuffled up into this slot is the next to look at.
+    if (find.matches.length) {
+      find.index = Math.min(at, find.matches.length - 1);
+      revealCurrent();
+    }
+  }
+
+  function replaceAll() {
+    const tab = activeTab();
+    if (!findable(tab) || find.scope !== 'source') { flash(tr('flash.replacePreview')); return; }
+    if (!find.matches.length) return;
+    const text = tab.pane.editor.value, repl = el.replaceInput.value;
+    const n = find.matches.length;
+    let out = '', at = 0;
+    for (const m of find.matches) { out += text.slice(at, m.start) + repl; at = m.end; }
+    // setEditorValue() already handles the dirty flag, the re-render, the preview's scroll
+    // position and the session write.
+    setEditorValue(tab, out + text.slice(at));
+    flash(tr('flash.replaced', n));
+    recompute(false);
+  }
+
+  el.find.addEventListener('click', () => (find.open ? closeFind() : openFind(false)));
+  el.findClose.addEventListener('click', closeFind);
+  el.findNext.addEventListener('click', () => step(1));
+  el.findPrev.addEventListener('click', () => step(-1));
+  el.replaceOne.addEventListener('click', replaceCurrent);
+  el.replaceAll.addEventListener('click', replaceAll);
+
+  el.findInput.addEventListener('input', () => {
+    find.query = el.findInput.value;
+    recompute(false);
+    revealCurrent();
+  });
+
+  const findKeys = e => {
+    if (e.key === 'Escape') { e.preventDefault(); closeFind(); return; }
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    if (e.target === el.replaceInput) replaceCurrent();
+    else step(e.shiftKey ? -1 : 1);
+  };
+  el.findInput.addEventListener('keydown', findKeys);
+  el.replaceInput.addEventListener('keydown', findKeys);
+
+  el.findScope.addEventListener('click', e => {
+    const b = e.target.closest('.seg');
+    if (!b || b.dataset.scope === find.scope) return;
+    find.scope = b.dataset.scope;
+    applyFindScope();
+    recompute(false);
+    revealCurrent();
+  });
+
+  el.findCase.addEventListener('click', () => {
+    find.caseSensitive = !find.caseSensitive;
+    applyFindScope();
+    recompute(false);
+    revealCurrent();
+  });
+
   /* ==================== Status bar / title ==================== */
 
   let flashTimer = null;
@@ -1543,6 +1926,12 @@
     const ctrl = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
     if (e.key === 'Escape' && anyMenuOpen()) { e.preventDefault(); closeMenus(); return; }
+    if (e.key === 'Escape' && find.open) { e.preventDefault(); closeFind(); return; }
+    // Ctrl+H is replace; Ctrl+Shift+H is "Save as HTML". Both check shift explicitly —
+    // the same trap as Ctrl+P / Ctrl+Shift+P further down.
+    if (ctrl && !e.shiftKey && key === 'f') { e.preventDefault(); openFind(false); return; }
+    if (ctrl && !e.shiftKey && key === 'h') { e.preventDefault(); openFind(true); return; }
+    if (e.key === 'F3') { e.preventDefault(); step(e.shiftKey ? -1 : 1); return; }
     if (ctrl && !e.shiftKey && key === 's') { e.preventDefault(); const t = activeTab(); if (t) saveTab(t); return; }
     if (ctrl && key === 'o') { e.preventDefault(); openFiles(); return; }
     // Must exclude shift, or Ctrl+Shift+E (export) gets eaten by the editor toggle first.
@@ -1797,5 +2186,6 @@
   window.__mdv = {
     buildSlides, buildDocument, deckTitle, openSlidesTab,
     exportDocument, exportPdf, activeTab, applyLang, state,
+    find, openFind, closeFind, step, replaceCurrent, replaceAll,
   };
 })();

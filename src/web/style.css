@@ -257,13 +257,18 @@ body {
   flex: 0 0 auto;
   min-height: 36px;
 }
+/* The tab strip is the only thing in the bar that gives way: it shrinks (and scrolls)
+   while every toolbar button keeps its natural width. This used to be a hard-coded
+   max-width reserving room for the toolbar, which went stale the moment a button was
+   added and left the labels wrapping onto two lines. */
 #tabs {
   display: flex;
   align-items: stretch;
   gap: 2px;
+  flex: 0 1 auto;
+  min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
-  max-width: calc(100% - 372px);   /* leave room for the toolbar, including the save caret */
 }
 #tabs::-webkit-scrollbar { height: 0; }
 
@@ -273,6 +278,7 @@ body {
   gap: 6px;
   padding: 0 6px 0 12px;
   height: 30px;
+  flex: 0 0 auto;          /* keep their width and let #tabs scroll, rather than squashing */
   max-width: 220px;
   border: 1px solid transparent;
   border-bottom: none;
@@ -322,6 +328,8 @@ body {
 /* ---------- Buttons ---------- */
 .icon-btn, .tool-btn {
   align-self: center;
+  flex: 0 0 auto;
+  white-space: nowrap;
   border: 1px solid transparent;
   background: transparent;
   color: var(--fg-dim);
@@ -351,6 +359,8 @@ body {
   width: 50%;
   min-width: 0;
   display: flex;
+  position: relative;                 /* the mirror layer is positioned against this */
+  background: var(--bg);              /* the textarea itself is transparent, see below */
   border-right: 1px solid var(--border-soft);
 }
 .pane.no-editor .editor-wrap,
@@ -369,22 +379,42 @@ body {
   background: var(--bg);
 }
 
-.editor {
-  flex: 1 1 auto;
-  width: 100%;
-  border: 0;
-  outline: none;
-  resize: none;
+/* The editor and its mirror MUST lay text out identically, or the search marks drift off
+   the words they belong to. Everything that decides wrapping and metrics lives here, in
+   one rule, shared by both — never duplicate a value into just one of them. */
+.editor, .editor-marks {
   padding: 14px 16px;
-  background: var(--bg);
-  color: var(--fg);
   font-family: var(--font-mono);
   font-size: 13.5px;
   line-height: 1.65;
   tab-size: 4;
   white-space: pre-wrap;
   overflow-wrap: break-word;
+  border: 0;
 }
+.editor {
+  flex: 1 1 auto;
+  width: 100%;
+  position: relative;
+  z-index: 1;
+  outline: none;
+  resize: none;
+  background: transparent;            /* .editor-wrap paints the background instead */
+  color: var(--fg);
+}
+
+/* Search hits in the source, painted underneath the transparent textarea. Its own text is
+   invisible here; only the marks show. Scrolled in lockstep by app.js. */
+.editor-marks {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  color: transparent;
+}
+.editor-marks mark { background: var(--mark); color: transparent; border-radius: 2px; }
+.editor-marks mark.current { background: var(--accent); }
 
 .divider {
   flex: 0 0 6px;
@@ -486,7 +516,7 @@ body {
 .dz-open:hover { border-color: var(--accent); color: var(--accent); }
 
 /* ---------- Dropdown menus (theme / language / slides / save share one look) ---------- */
-#theme-wrap, #lang-wrap, #slides-wrap, #save-wrap { position: relative; display: flex; }
+#theme-wrap, #lang-wrap, #slides-wrap, #save-wrap { position: relative; display: flex; flex: 0 0 auto; }
 #theme-menu, #lang-menu, #slides-menu, #save-menu {
   position: absolute;
   top: calc(100% + 6px);
@@ -537,6 +567,71 @@ body {
 #slides-wrap, #save-wrap { gap: 0; }
 .tool-btn.caret { width: 20px; padding: 0; font-size: 10px; }
 #slides-wrap:hover .tool-btn, #save-wrap:hover .tool-btn { border-color: var(--border); color: var(--fg); }
+
+/* ---------- Find bar ---------- */
+/* Floats over the top-right of the panes, the way a browser's does. The z-index clears
+   both the drop hint (5) and the floating editor toggle (6). */
+#findbar {
+  position: absolute;
+  top: 8px;
+  right: 18px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .35);
+}
+#findbar[hidden], #find-replace-row[hidden] { display: none; }
+.find-row { display: flex; align-items: center; gap: 6px; }
+#find-input, #replace-input {
+  flex: 1 1 auto;
+  width: 186px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+}
+#find-input:focus, #replace-input:focus { border-color: var(--accent); }
+#find-input.no-match { border-color: var(--danger); }
+#find-count {
+  min-width: 54px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+#find-scope { display: flex; }
+.seg {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.seg:first-child { border-radius: 6px 0 0 6px; }
+.seg:last-child { border-radius: 0 6px 6px 0; border-left: 0; }
+.seg.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+#find-case { font-size: 12px; padding: 3px 8px; }
+
+/* Preview matches are Ranges handed to CSS.highlights, so the rendered DOM is never
+   touched — which is what lets the preview re-render on every keystroke without fighting
+   the search. Both colours key off the theme like everything else. */
+::highlight(find) { background: var(--mark); color: var(--fg); }
+::highlight(find-current) { background: var(--accent); color: var(--bg); }
+/* The source side cannot use ::highlight — a textarea's text is not in the DOM, and
+   Chromium stops drawing even its own selection once the textarea loses focus. Its matches
+   are painted on the mirror layer instead; see .editor-marks above. */
 
 /* ---------- Dialog (file changed on disk) ---------- */
 /* Deliberately not the native confirm(): it blocks the whole WebView synchronously, which stops automated tests dead. */
@@ -752,7 +847,7 @@ body {
    are always the light palette. */
 @media print {
   #tabbar, #statusbar, .editor-wrap, .divider, .editor-toggle, .dropzone,
-  #ext-dialog { display: none !important; }
+  #ext-dialog, #findbar { display: none !important; }
   html, body { height: auto; overflow: visible; }
   body { display: block; }
   #panes { position: static; overflow: visible; }
