@@ -19,10 +19,14 @@
     slides: $('#btn-slides'),
     slidesMore: $('#btn-slides-more'),
     slidesMenu: $('#slides-menu'),
-    theme: $('#btn-theme'),
+    settings: $('#btn-settings'),
+    settingsMenu: $('#settings-menu'),
     themeMenu: $('#theme-menu'),
-    lang: $('#btn-lang'),
     langMenu: $('#lang-menu'),
+    assocMenu: $('#assoc-menu'),
+    valTheme: $('#val-theme'),
+    valLang: $('#val-lang'),
+    valAssoc: $('#val-assoc'),
     find: $('#btn-find'),
     findbar: $('#findbar'),
     findInput: $('#find-input'),
@@ -86,10 +90,22 @@
       'toolbar.slidesTitle': 'Preview slides in a tab (Ctrl+Shift+P)',
       'toolbar.slidesMore': 'More slide actions',
       'toolbar.find': 'Find (Ctrl+F)',
-      'toolbar.theme': 'Theme',
-      'toolbar.themeCurrent': 'Theme: {0}',
-      'toolbar.lang': 'Language',
-      'toolbar.langCurrent': 'Language: {0}',
+      'toolbar.settings': 'Settings (Ctrl+,)',
+      'settings.lang': 'Language',
+      'settings.theme': 'Theme',
+      'settings.assoc': 'File association',
+      'assoc.on': 'on',
+      'assoc.off': 'off',
+      'assoc.some': '{0} of {1}',
+      'assoc.all': 'Register all',
+      'assoc.none': 'Remove all',
+      'assoc.note': 'Registered types offer MD Viewer under “Open with” in the right-click '
+        + 'menu. Windows does not let a program make itself the default — to do that, pick '
+        + '“Choose another app” there and tick “Always use this app”.',
+      'assoc.unavailable': 'File association needs the desktop app',
+      'flash.assocOn': 'Registered {0}',
+      'flash.assocOff': 'Removed {0}',
+      'flash.assocFailed': 'Could not change the file association: {0}',
       'menu.preview': '▷ Preview in a tab',
       'menu.export': '⭳ Export slides as HTML…',
       'menu.saveHtml': '⭳ Save as HTML…',
@@ -180,10 +196,22 @@
       'toolbar.slidesTitle': '在分頁中預覽投影片 (Ctrl+Shift+P)',
       'toolbar.slidesMore': '投影片的其他動作',
       'toolbar.find': '尋找 (Ctrl+F)',
-      'toolbar.theme': '佈景主題',
-      'toolbar.themeCurrent': '佈景主題：{0}',
-      'toolbar.lang': '語言',
-      'toolbar.langCurrent': '語言：{0}',
+      'toolbar.settings': '設定 (Ctrl+,)',
+      'settings.lang': '語言',
+      'settings.theme': '佈景主題',
+      'settings.assoc': '檔案關聯',
+      'assoc.on': '已註冊',
+      'assoc.off': '未註冊',
+      'assoc.some': '{1} 種中的 {0} 種',
+      'assoc.all': '全部註冊',
+      'assoc.none': '全部移除',
+      'assoc.note': '已註冊的類型，在檔案上按右鍵的「開啟方式」裡就會出現 MD Viewer。'
+        + 'Windows 不允許程式自行設成預設程式；要設成預設，請在該處選「選擇其他應用程式」'
+        + '並勾選「一律使用此應用程式」。',
+      'assoc.unavailable': '檔案關聯只能在桌面版設定',
+      'flash.assocOn': '已註冊 {0}',
+      'flash.assocOff': '已移除 {0}',
+      'flash.assocFailed': '無法變更檔案關聯：{0}',
       'menu.preview': '▷ 在分頁中預覽',
       'menu.export': '⭳ 匯出投影片 HTML…',
       'menu.saveHtml': '⭳ 另存 HTML…',
@@ -1712,18 +1740,19 @@
   }
 
   /* ==================== Dropdown menus ====================
-   * Theme, language, slides and save all use the same dropdown. Registering them here
-   * keeps "opening one closes the others", the click-anywhere-else handler and Escape as
-   * a single list, instead of one more branch in each of those three places per menu.
+   * Settings, slides and save all use the same dropdown. Registering them here keeps
+   * "opening one closes the others", the click-anywhere-else handler and Escape as a
+   * single list, instead of one more branch in each of those three places per menu.
    */
 
   const MENUS = [];
-  function registerMenu(menu, caret) {
+  function registerMenu(menu, caret, onClose) {
     const entry = {
       isOpen: () => !menu.hidden,
       close: () => {
         menu.hidden = true;
         if (caret) caret.classList.remove('on');
+        if (onClose) onClose();
       },
       toggle: () => {
         const wasOpen = !menu.hidden;
@@ -1740,6 +1769,46 @@
   const anyMenuOpen = () => MENUS.some(m => m.isOpen());
 
   document.addEventListener('click', closeMenus);
+
+  /* ==================== Settings ====================
+   * Everything configurable lives in this one menu; each row opens a submenu. Theme and
+   * language kept their own menu elements when they moved in here, so their render
+   * functions did not have to change — only where the current value is displayed did.
+   */
+
+  const SUBS = { lang: el.langMenu, theme: el.themeMenu, assoc: el.assocMenu };
+  const settingsRow = name => el.settingsMenu.querySelector('.menu-row[data-sub="' + name + '"]');
+
+  function closeSubs() {
+    for (const name in SUBS) SUBS[name].hidden = true;
+    el.settingsMenu.querySelectorAll('.menu-row').forEach(r => r.classList.remove('on'));
+  }
+
+  function openSub(name) {
+    if (!SUBS[name]) return;
+    closeSubs();
+    if (name === 'assoc') refreshAssoc();     // it may have been changed from outside
+    SUBS[name].hidden = false;
+    const row = settingsRow(name);
+    if (row) row.classList.add('on');
+  }
+
+  const settingsMenu = registerMenu(el.settingsMenu, null, closeSubs);
+
+  el.settings.addEventListener('click', e => { e.stopPropagation(); settingsMenu.toggle(); });
+
+  // Clicks inside stay inside: picking a theme or a language closes the menu itself
+  // (below), while toggling an association is meant to leave it open for the next one.
+  el.settingsMenu.addEventListener('click', e => e.stopPropagation());
+
+  el.settingsMenu.querySelectorAll('.menu-row').forEach(row => {
+    const name = row.dataset.sub;
+    row.addEventListener('click', () => {
+      if (SUBS[name] && SUBS[name].hidden) openSub(name); else closeSubs();
+    });
+    // A submenu is a child of its .menu-group, so moving onto it never leaves the group.
+    row.parentElement.addEventListener('mouseenter', () => openSub(name));
+  });
 
   /* ==================== Theme ==================== */
 
@@ -1771,7 +1840,7 @@
     root.dataset.theme = id;                       // what the user picked (may be 'auto') → menu tick
     root.dataset.skin = skin;                      // the resolved theme → every colour rule
     root.dataset.dark = themeById(skin).dark ? '1' : '0';
-    el.theme.title = tr('toolbar.themeCurrent', themeLabel(themeById(id)));
+    el.valTheme.textContent = themeLabel(themeById(id));
     renderThemeMenu();
     try { localStorage.setItem(THEME_KEY, id); } catch { /* ignore */ }
     saveSession();
@@ -1804,9 +1873,6 @@
     }
   }
 
-  const themeMenu = registerMenu(el.themeMenu);
-
-  el.theme.addEventListener('click', e => { e.stopPropagation(); themeMenu.toggle(); });
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     if (document.documentElement.dataset.theme === 'auto') applyTheme('auto');
   });
@@ -1854,11 +1920,13 @@
     state.lang = langById(id) ? id : defaultLang();
     document.documentElement.lang = state.lang;
     applyStaticText();
-    el.lang.title = tr('toolbar.langCurrent', langById(state.lang).label);
+    el.valLang.textContent = langById(state.lang).label;
     renderLangMenu();
     renderThemeMenu();
-    el.theme.title = tr('toolbar.themeCurrent',
-      themeLabel(themeById(document.documentElement.dataset.theme || 'auto')));
+    el.valTheme.textContent =
+      themeLabel(themeById(document.documentElement.dataset.theme || 'auto'));
+    renderAssocMenu();
+    updateAssocValue();
     refreshAutoNames();
     // Alert labels are baked into the rendered HTML, so every preview needs redrawing.
     for (const tab of state.tabs) if (tab.kind === 'md') render(tab);
@@ -1888,9 +1956,93 @@
     }
   }
 
-  const langMenu = registerMenu(el.langMenu);
+  /* ==================== File association ====================
+   * The registry work is on the native side (class Assoc in Program.cs); this is display
+   * only. Windows will not let a program make itself the default handler — UserChoice is
+   * hash-protected — so what gets registered is a candidate under "Open with", and the
+   * note at the foot of the submenu says where the user finishes the job.
+   */
 
-  el.lang.addEventListener('click', e => { e.stopPropagation(); langMenu.toggle(); });
+  const ASSOC_EXTS = ['.md', '.markdown', '.mdown', '.mkd'];
+  const assoc = { states: {} };
+
+  function assocOnCount() {
+    return ASSOC_EXTS.filter(x => assoc.states[x]).length;
+  }
+
+  function updateAssocValue() {
+    if (!HOST.available) { el.valAssoc.textContent = '—'; return; }
+    const on = assocOnCount();
+    el.valAssoc.textContent = on === 0 ? tr('assoc.off')
+      : on === ASSOC_EXTS.length ? tr('assoc.on')
+        : tr('assoc.some', on, ASSOC_EXTS.length);
+  }
+
+  async function refreshAssoc() {
+    if (HOST.available) {
+      const r = await HOST.send('assocStatus');
+      if (r && r.ok) assoc.states = r.states || {};
+    }
+    renderAssocMenu();
+    updateAssocValue();
+  }
+
+  async function setAssoc(exts, on) {
+    if (!exts.length) return;
+    const r = await HOST.send('assocSet', { exts, on });
+    if (!r || !r.ok) {
+      flash(tr('flash.assocFailed', (r && r.error) || tr('error.unknown')));
+      return;
+    }
+    assoc.states = r.states || {};
+    renderAssocMenu();
+    updateAssocValue();
+    flash(tr(on ? 'flash.assocOn' : 'flash.assocOff', exts.join('  ')));
+  }
+
+  function renderAssocMenu() {
+    const menu = el.assocMenu;
+    menu.textContent = '';
+    const note = text => Object.assign(document.createElement('div'),
+      { className: 'menu-note', textContent: text });
+    const sep = () => Object.assign(document.createElement('div'), { className: 'menu-sep' });
+
+    if (!HOST.available) {                       // opened in a plain browser for debugging
+      menu.appendChild(note(tr('assoc.unavailable')));
+      return;
+    }
+
+    for (const ext of ASSOC_EXTS) {
+      const on = !!assoc.states[ext];
+      const b = document.createElement('button');
+      b.className = 'assoc-item' + (on ? ' on' : '');
+      b.type = 'button';
+      b.dataset.ext = ext;
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = ext;
+      const tick = document.createElement('span');
+      tick.className = 'tick';
+      tick.textContent = '✓';
+      b.append(name, tick);
+      b.addEventListener('click', () => setAssoc([ext], !on));
+      menu.appendChild(b);
+    }
+
+    menu.appendChild(sep());
+    for (const [key, on] of [['assoc.all', true], ['assoc.none', false]]) {
+      const b = document.createElement('button');
+      b.className = 'menu-item';
+      b.type = 'button';
+      b.dataset.act = on ? 'all' : 'none';
+      b.textContent = tr(key);
+      b.addEventListener('click', () =>
+        setAssoc(ASSOC_EXTS.filter(x => !!assoc.states[x] !== on), on));
+      menu.appendChild(b);
+    }
+    menu.appendChild(sep());
+    menu.appendChild(note(tr('assoc.note')));
+  }
 
   /* ==================== Toolbar / shortcuts ==================== */
 
@@ -1934,6 +2086,7 @@
     if (e.key === 'F3') { e.preventDefault(); step(e.shiftKey ? -1 : 1); return; }
     if (ctrl && !e.shiftKey && key === 's') { e.preventDefault(); const t = activeTab(); if (t) saveTab(t); return; }
     if (ctrl && key === 'o') { e.preventDefault(); openFiles(); return; }
+    if (ctrl && key === ',') { e.preventDefault(); settingsMenu.toggle(); return; }
     // Must exclude shift, or Ctrl+Shift+E (export) gets eaten by the editor toggle first.
     if (ctrl && !e.shiftKey && key === 'e') { e.preventDefault(); el.toggleEditor.click(); return; }
     // Ctrl+Shift+P has to come before Ctrl+P, otherwise print swallows it.
@@ -2178,6 +2331,7 @@
     state.booted = true;
     HOST.flush();          // deliver files that arrived before we were ready
     reportTitle();
+    refreshAssoc();        // fills in the settings row's current value
   })();
 
   // For src/test/test.py: every export opens a native save dialog that CDP cannot click,
@@ -2187,5 +2341,6 @@
     buildSlides, buildDocument, deckTitle, openSlidesTab,
     exportDocument, exportPdf, activeTab, applyLang, state,
     find, openFind, closeFind, step, replaceCurrent, replaceAll,
+    setAssoc, refreshAssoc, assoc, ASSOC_EXTS,
   };
 })();

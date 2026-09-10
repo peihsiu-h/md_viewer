@@ -33,13 +33,41 @@
     </div>
   </div>
   <button id="btn-find" class="icon-btn" data-i18n-title="toolbar.find">🔍</button>
-  <div id="lang-wrap">
-    <button id="btn-lang" class="icon-btn" data-i18n-title="toolbar.lang">🌐</button>
-    <div id="lang-menu" hidden></div>
-  </div>
-  <div id="theme-wrap">
-    <button id="btn-theme" class="icon-btn" data-i18n-title="toolbar.theme">◐</button>
-    <div id="theme-menu" hidden></div>
+  <!-- One settings menu for everything configurable; anything added later belongs in here
+       rather than as another toolbar button. Each row opens a submenu to its left — the
+       button sits at the right edge, so opening leftwards is what keeps a submenu on
+       screen. Theme and language keep their original menu ids, which is what lets their
+       render functions (and the tests) stay untouched. -->
+  <div id="settings-wrap">
+    <button id="btn-settings" class="icon-btn" data-i18n-title="toolbar.settings">⚙</button>
+    <div id="settings-menu" hidden>
+      <div class="menu-group">
+        <button class="menu-row" type="button" data-sub="lang">
+          <span class="name" data-i18n="settings.lang"></span>
+          <span class="value" id="val-lang"></span>
+          <span class="arrow">▸</span>
+        </button>
+        <div id="lang-menu" class="submenu" hidden></div>
+      </div>
+      <div class="menu-group">
+        <button class="menu-row" type="button" data-sub="theme">
+          <span class="name" data-i18n="settings.theme"></span>
+          <span class="value" id="val-theme"></span>
+          <span class="arrow">▸</span>
+        </button>
+        <div id="theme-menu" class="submenu" hidden></div>
+      </div>
+      <div class="menu-sep"></div>
+      <div class="menu-group">
+        <button class="menu-row" type="button" data-sub="assoc">
+          <span class="name" data-i18n="settings.assoc"></span>
+          <span class="value" id="val-assoc"></span>
+          <span class="arrow">▸</span>
+        </button>
+        <!-- Filled in by renderAssocMenu(); the state comes from the native side. -->
+        <div id="assoc-menu" class="submenu" hidden></div>
+      </div>
+    </div>
   </div>
 </div>
 

@@ -18,6 +18,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+import winreg
 
 import websocket
 
@@ -170,13 +171,72 @@ def find_state(cdp):
     })()""")
 
 
-def pick_theme(cdp, theme_id):
-    """Choose a theme the way a user would: open the menu, click the entry."""
-    cdp.ev("document.querySelector('#btn-theme').click()")
+def open_settings(cdp, sub=None):
+    """Open the settings menu, and optionally the submenu on one of its rows."""
+    cdp.ev("document.querySelector('#btn-settings').click()")
     time.sleep(0.3)
+    if sub:
+        cdp.ev("document.querySelector('.menu-row[data-sub=%s]').click()" % json.dumps(sub))
+        time.sleep(0.3)
+
+
+def pick_theme(cdp, theme_id):
+    """Choose a theme the way a user would: open settings, open the submenu, click."""
+    open_settings(cdp, "theme")
     cdp.ev("document.querySelector('#theme-menu .theme-item[data-id=%s]').click()"
            % json.dumps(theme_id))
     time.sleep(0.5)
+
+
+# ---- File association (the registry side of the settings menu) ----
+# Everything the app writes lives under HKCU\Software\Classes.
+CLASSES = r"Software\Classes"
+PROGID = "MdViewer.md"
+# .mkd on purpose: the tester's own .md association must never be disturbed by a test run.
+TEST_EXT = ".mkd"
+
+
+def _key_exists(path):
+    try:
+        winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CURRENT_USER, path))
+        return True
+    except OSError:
+        return False
+
+
+def _value(path, name):
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as k:
+            return winreg.QueryValueEx(k, name)[0]
+    except OSError:
+        return None
+
+
+def _has_value(path, name):
+    """Whether the value exists at all — its content is beside the point.
+
+    OpenWithProgids entries are empty REG_NONE values (that is the convention Explorer
+    expects), and winreg hands an empty REG_NONE back as None, which _value cannot tell
+    apart from "no such value".
+    """
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as k:
+            winreg.QueryValueEx(k, name)
+            return True
+    except OSError:
+        return False
+
+
+def assoc_state(ext):
+    """Read back what is actually in the registry for one extension."""
+    return {
+        # The value that puts us in Explorer's "Open with" list.
+        "openwith": _has_value(CLASSES + "\\" + ext + r"\OpenWithProgids", PROGID),
+        "verb": _key_exists(CLASSES + r"\SystemFileAssociations" + "\\" + ext
+                            + r"\shell\MdViewer.open\command"),
+        "supported": _has_value(CLASSES + r"\Applications\MdViewer.exe\SupportedTypes", ext),
+        "command": _value(CLASSES + "\\" + PROGID + r"\shell\open\command", ""),
+    }
 
 
 def set_lang(cdp, lang):
@@ -548,8 +608,7 @@ def main():
     # ---------- Themes ----------
     click_tab(cdp, "demo.md")                                    # needs a code block to check highlighting
     time.sleep(1.2)
-    cdp.ev("document.querySelector('#btn-theme').click()")
-    time.sleep(0.4)
+    open_settings(cdp, "theme")
     menu = cdp.ev("""(() => {
       const m = document.querySelector('#theme-menu');
       return {open: !m.hidden,
@@ -589,15 +648,13 @@ def main():
     check("the Solarized Light background reaches the page", st["bg"] == "rgb(253, 246, 227)", st["bg"])
     check("highlighting switches to the Solarized palette", st["kw"] == "rgb(133, 153, 0)", st["kw"])
 
-    cdp.ev("document.querySelector('#btn-theme').click()")
-    time.sleep(0.3)
+    open_settings(cdp, "theme")
     cdp.ev("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))")
     time.sleep(0.3)
     check("Esc closes the theme menu", cdp.ev("document.querySelector('#theme-menu').hidden"))
 
     # ---------- Language ----------
-    cdp.ev("document.querySelector('#btn-lang').click()")
-    time.sleep(0.4)
+    open_settings(cdp, "lang")
     lmenu = cdp.ev("""(() => {
       const m = document.querySelector('#lang-menu');
       return {open: !m.hidden,
@@ -611,8 +668,7 @@ def main():
 
     cdp.ev("document.querySelector('#new-tab').click()")            # a generated tab name to relabel
     time.sleep(0.4)
-    cdp.ev("document.querySelector('#btn-lang').click()")
-    time.sleep(0.3)
+    open_settings(cdp, "lang")
     cdp.ev("document.querySelector('#lang-menu .lang-item[data-id=\"zh-Hant\"]').click()")
     time.sleep(0.8)
     zh = cdp.ev("""(() => ({
@@ -632,8 +688,7 @@ def main():
           "\u672a\u547d\u540d" in zh["tabs"], zh["tabs"])
     check("the menu closes after picking a language", not zh["menuOpen"])
 
-    cdp.ev("document.querySelector('#btn-lang').click()")
-    time.sleep(0.3)
+    open_settings(cdp, "lang")
     cdp.ev("document.querySelector('#lang-menu .lang-item[data-id=\"en\"]').click()")
     time.sleep(0.8)
     back = cdp.ev("""(() => ({
@@ -644,6 +699,98 @@ def main():
           back["open"] == "Open" and "Untitled" in back["tabs"], back)
     cdp.ev("document.querySelector('.tab.active .close').click()")
     time.sleep(0.4)
+
+    # ---------- Settings menu ----------
+    open_settings(cdp)
+    st = cdp.ev("""(() => {
+      const m = document.querySelector('#settings-menu');
+      return {open: !m.hidden,
+              rows: [...m.querySelectorAll('.menu-row')].map(r=>r.dataset.sub),
+              subs: [...m.querySelectorAll('.submenu')].filter(s=>!s.hidden).length,
+              theme: document.querySelector('#val-theme').textContent,
+              lang: document.querySelector('#val-lang').textContent};
+    })()""")
+    check("the settings button opens the menu", st["open"])
+    check("the settings menu holds language, theme and file association",
+          st["rows"] == ["lang", "theme", "assoc"], st["rows"])
+    check("no submenu is open until a row is picked", st["subs"] == 0, st["subs"])
+    check("the settings rows show the values in force",
+          st["theme"] == "Solarized Light" and st["lang"] == "English", st)
+
+    cdp.ev("document.querySelector('.menu-row[data-sub=\"theme\"]').click()")
+    time.sleep(0.3)
+    st = cdp.ev("""(() => {
+      const sub = document.querySelector('#theme-menu');
+      const row = document.querySelector('.menu-row[data-sub="theme"]');
+      const s = sub.getBoundingClientRect(), r = row.getBoundingClientRect();
+      return {open: !sub.hidden, on: row.classList.contains('on'),
+              leftwards: s.right <= r.left + 1, onScreen: s.left >= 0};
+    })()""")
+    check("a settings row opens its submenu", st["open"] and st["on"], st)
+    # The settings button sits at the right edge, so a rightwards flyout would be off-window.
+    check("the submenu opens leftwards and stays on screen",
+          st["leftwards"] and st["onScreen"], st)
+
+    cdp.ev("document.querySelector('.menu-row[data-sub=\"lang\"]').click()")
+    time.sleep(0.3)
+    st = cdp.ev("""(() => ({theme: document.querySelector('#theme-menu').hidden,
+                            lang: !document.querySelector('#lang-menu').hidden}))()""")
+    check("opening one submenu closes the other", st["theme"] and st["lang"], st)
+
+    cdp.ev("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))")
+    time.sleep(0.3)
+    st = cdp.ev("""(() => ({menu: document.querySelector('#settings-menu').hidden,
+                            sub: document.querySelector('#lang-menu').hidden}))()""")
+    check("Esc closes the settings menu and the submenu with it", st["menu"] and st["sub"], st)
+
+    cdp.ev("document.dispatchEvent(new KeyboardEvent("
+           "'keydown',{key:',',ctrlKey:true,bubbles:true}))")
+    time.sleep(0.3)
+    check("Ctrl+, opens the settings menu",
+          not cdp.ev("document.querySelector('#settings-menu').hidden"))
+    cdp.ev("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))")
+    time.sleep(0.3)
+
+    # ---------- File association ----------
+    # Everything here goes through .mkd on purpose: whatever the tester has set up for
+    # .md is never touched, and that is checked at the end.
+    md_before = assoc_state(".md")["openwith"]
+    was_on = assoc_state(TEST_EXT)["openwith"]
+
+    cdp.ev("window.__mdv.setAssoc([%s], true)" % json.dumps(TEST_EXT))
+    time.sleep(0.5)
+    on = assoc_state(TEST_EXT)
+    check("registering adds the ProgID to the extension's OpenWithProgids", on["openwith"])
+    check("registering adds our own context-menu verb", on["verb"])
+    check("registering lists the extension under Applications", on["supported"])
+    check("the registered command points at this exe",
+          bool(on["command"]) and EXE.lower() in (on["command"] or "").lower(), on["command"])
+    ui = cdp.ev("""(() => {
+      const b = document.querySelector('#assoc-menu .assoc-item[data-ext=%s]');
+      return {tick: b ? b.classList.contains('on') : null,
+              value: document.querySelector('#val-assoc').textContent,
+              note: !!document.querySelector('#assoc-menu .menu-note')};
+    })()""" % json.dumps(TEST_EXT))
+    check("the submenu ticks the extension it just registered", ui["tick"] is True, ui)
+    check("the settings row reports the association state", bool(ui["value"]), ui)
+    # Windows will not let us set a default, so the submenu has to say where the user does.
+    check("the submenu carries the explanatory note", ui["note"])
+
+    cdp.ev("window.__mdv.setAssoc([%s], false)" % json.dumps(TEST_EXT))
+    time.sleep(0.5)
+    off = assoc_state(TEST_EXT)
+    check("removing takes the ProgID back out of OpenWithProgids", not off["openwith"])
+    check("removing takes the context-menu verb out", not off["verb"])
+    check("removing takes the extension out of Applications", not off["supported"])
+    tick = cdp.ev("document.querySelector('#assoc-menu .assoc-item[data-ext=%s]')"
+                  ".classList.contains('on')" % json.dumps(TEST_EXT))
+    check("the submenu unticks it again", tick is False)
+    check("another extension's association is left alone",
+          assoc_state(".md")["openwith"] == md_before)
+
+    if was_on:                       # put back whatever the tester had before the run
+        cdp.ev("window.__mdv.setAssoc([%s], true)" % json.dumps(TEST_EXT))
+        time.sleep(0.5)
 
     # ---------- Exporting slides ----------
     check("the toolbar has a Slides button",

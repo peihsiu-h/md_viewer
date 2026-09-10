@@ -19,7 +19,9 @@ That's the whole installation.
 Double-click `MdViewer.exe`, or:
 
 ```
-MdViewer.exe a.md b.md      # open files directly; can also be set as the default .md handler
+MdViewer.exe a.md b.md      # open files directly (into the window already open, if there is one)
+MdViewer.exe --register     # add MD Viewer to the right-click "Open with" menu for .md and friends
+MdViewer.exe --unregister   # take it back out
 ```
 
 | Action | How |
@@ -32,6 +34,7 @@ MdViewer.exe a.md b.md      # open files directly; can also be set as the defaul
 | Switch tabs | `Alt+1`–`Alt+9`, `Ctrl+Tab` |
 | Find | `Ctrl+F`, or `🔍` in the toolbar; `Enter` / `Shift+Enter` or `F3` step, `Esc` closes |
 | Replace | `Ctrl+H` (source only) |
+| Settings (language, theme, file association) | `⚙` at the right of the toolbar, or `Ctrl+,` |
 | Print preview | `Ctrl+P` |
 | Save a copy as HTML | the `▾` next to "Save" → "Save as HTML…", or `Ctrl+Shift+H` |
 | Save a copy as PDF | the `▾` next to "Save" → "Save as PDF…", or `Ctrl+Shift+D` |
@@ -63,11 +66,21 @@ editor on the left at any time.
 - **Tabs come back after a restart.** What was open is recorded in
   `%LOCALAPPDATA%\MdViewer\session.json`; tabs backed by a file are re-read from disk on
   the next launch, so nothing stale is shown, and only unsaved content is kept as a draft.
-- **Nine themes** (the `◐` button at the right of the toolbar): match system, GitHub
-  Light / Dark, Solarized Light / Dark, Nord, Dracula, One Dark, Gruvbox Dark.
-  **Syntax highlighting recolours with the theme.**
-- **English / 正體中文 interface** (the `🌐` button), defaulting to your system language
-  and remembered in `session.json`.
+- **Everything configurable is behind the `⚙` button** (or `Ctrl+,`): theme, interface
+  language and file association.
+- **Nine themes**: match system, GitHub Light / Dark, Solarized Light / Dark, Nord,
+  Dracula, One Dark, Gruvbox Dark. **Syntax highlighting recolours with the theme.**
+- **English / 正體中文 interface**, defaulting to your system language and remembered in
+  `session.json`.
+- **Right-click → "Open with" → MD Viewer.** `⚙` → "File association" registers `.md`,
+  `.markdown`, `.mdown` and `.mkd` (individually, if you like). It writes only to
+  `HKCU\Software\Classes`, so **it needs no administrator rights** and affects nobody else
+  on the machine; the same menu removes it again. Windows does not let a program make
+  itself the *default* handler, so to go that far, use "Choose another app" in that same
+  right-click menu and tick "Always use this app". `MdViewer.exe --register` and
+  `--unregister` do the same thing from a script.
+- **One window, not five.** Opening several files at once from Explorer puts them in tabs
+  of the window you already have open, rather than starting a program per file.
 - **Find, in either half** (`Ctrl+F`). The bar carries a **Source / Preview** switch:
   searching the source finds Markdown syntax itself (`](`, `##`), searching the preview
   finds the words you are reading, and it keeps working with the editor collapsed. Every

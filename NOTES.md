@@ -317,6 +317,62 @@ reading contents directly — only then saving needs a "save as".
   `max-width: calc(100% - 348px)` — a hard-coded reservation that went stale the moment a
   button was added, leaving the labels wrapping onto two lines. `#tabs` now shrinks and
   scrolls while every button is `flex: 0 0 auto`.
+- **Everything configurable lives behind one `⚙` in the toolbar.** Theme and language used
+  to be two separate buttons, and each new setting would have wanted a third — in a toolbar
+  whose only slack is `#tabs` giving way. `#settings-menu` now holds a row per setting, each
+  opening a submenu, and anything added later goes in there rather than into the toolbar.
+  - **Theme and language kept their own menu elements** (`#theme-menu` / `#lang-menu`) when
+    they moved inside; they only gained a `.submenu` class. So `renderThemeMenu()` /
+    `renderLangMenu()` did not change at all, and neither did the tests' inner selectors.
+    What did change is where the current value is shown: the `.value` span on the row,
+    instead of the old button's `title`.
+  - **Submenus open leftwards** (`right: calc(100% + 5px)`). The button is at the right edge
+    of the window, so the conventional rightwards flyout would open off-screen. A submenu is
+    a *child* of its `.menu-group`, which is what makes moving the pointer onto it not count
+    as leaving the row — no mouseleave bookkeeping needed.
+  - `registerMenu()` gained an `onClose` callback purely so `closeMenus()` can collapse an
+    open submenu with its parent; Escape and click-anywhere-else then need no new branches.
+- **File association writes only to `HKCU\Software\Classes`** (`class Assoc`), so it needs no
+  elevation and touches nobody else's account.
+  - **It cannot make MD Viewer the default handler, and must not try.** That is
+    `HKCU\…\FileExts\<ext>\UserChoice`, which Windows 8 and later protect with a hash;
+    writing it directly gets the value discarded and can clear the association entirely.
+    What gets registered is a *candidate*: a ProgID, plus the extension's `OpenWithProgids`,
+    which is what puts us in the "Open with" list. The note at the foot of the submenu tells
+    the user where to finish the job, and it is not decoration — without it the feature
+    reads as broken.
+  - **The custom verb under `SystemFileAssociations` lands in "Show more options" on
+    Windows 11**, not the first-level menu; that needs an `IExplorerCommand` inside an MSIX
+    package, which a single portable exe cannot be. "Open with" appears in both menus, which
+    is why that is the registration that actually matters.
+  - The verb carries a **label**, so it is rewritten on every `lang` message
+    (`Assoc.RelabelVerb()`); it would otherwise stay in whatever language it was registered
+    in.
+  - A registration records an **absolute path**, and this exe is meant to be copied around,
+    so `Assoc.RefreshStale()` runs at startup and quietly repoints it. Nothing is written
+    unless the path is actually wrong.
+  - Extensions arriving from the web side go through `Norm()`, which only lets the four
+    known ones through — a registry write is not the place to trust a string. The array
+    itself must be read with `StrList()` (trap 4 above).
+  - Unregistering removes **only our own values** and then prunes keys that are left
+    completely empty; an extension key with anything else in it stays.
+- **Explorer calls the exe once per file, so there is a single-instance handoff.** Without
+  it, opening five files from the right-click menu means five windows — and five processes
+  writing `session.json` over each other. A `Local\` mutex decides who is primary; later
+  launches send their paths down a named pipe and exit.
+  - A named pipe rather than `WM_COPYDATA`: no window handle to hunt for, and no guessing at
+    a window title that changes with the active tab.
+  - `NamedPipeClientStream.Connect` retries until the pipe exists, which covers the gap
+    between the primary taking the mutex and its server actually listening (the server
+    starts in `Shown`, where the handle is guaranteed). If nobody answers, the launch falls
+    through and opens its own window rather than dropping the files.
+  - `AllowSetForegroundWindow` has to be called by the *departing* process, or the primary
+    only flashes in the taskbar instead of coming forward.
+  - Paths that arrive before the web side is up wait in `pendingFiles` and are flushed by
+    `OnNavigationCompleted`, since `SendFiles()` drops anything sent before `ready`.
+  - **`--dev` opts out of all of it.** Otherwise the instance `test.py` launches would be
+    handed to whatever window the user already had open, and the whole run would be talking
+    to the wrong process.
 - **Dialogs are hand-rolled rather than native `confirm()`**: `confirm()` blocks the entire
   WebView synchronously, taking CDP down with it, which makes that path permanently
   untestable. The in-page modal (`#ext-dialog`) can also show the filename and a red
@@ -325,7 +381,7 @@ reading contents directly — only then saving needs a "save as".
 
 ## Verification
 
-`py src\test\test.py` — **143 end-to-end checks**. It generates its own fixtures and shuts
+`py src\test\test.py` — **164 end-to-end checks**. It generates its own fixtures and shuts
 the program down when finished.
 
 It launches `MdViewer.exe --dev` (which opens a remote debugging port on `127.0.0.1:9333`)
@@ -346,13 +402,22 @@ the tests drive the real functions through `window.__mdv` with one.
 Requires `pip install websocket-client`. Rebuild with `build.cmd` and run this after
 changing anything under `src\`.
 
-> Three things it cannot cover have been checked by hand with throwaway scripts: the drag
+The file-association checks drive **`.mkd` only**, never `.md`: a test run must not disturb
+whatever the person running it has set up for their own Markdown files, and there is a check
+at the end confirming `.md` came through untouched.
+
+> Four things it cannot cover have been checked by hand with throwaway scripts: the drag
 > and drop CDP simulates happens at the Chromium layer, whereas a real OS drop adds an
 > OLE→WebView2 conversion on top; the "check the file when switching back to the window"
 > path runs off `Form.Activated`, which CDP cannot trigger and which needs `AppActivate`;
-> and the compatibility mapping for old theme values (`light` / `dark`) can only be
-> isolated by killing the process and deleting the file first, because session.json
-> outranks localStorage.
+> the compatibility mapping for old theme values (`light` / `dark`) can only be isolated by
+> killing the process and deleting the file first, because session.json outranks
+> localStorage; and the single-instance handoff needs a second real process, which the test
+> run cannot produce — `--dev` deliberately opts out of it, so a `--dev` instance is not
+> listening for one.
+
+Close any other MdViewer window before a run: two instances both write `session.json`, and
+the reopen check at the end reads it.
 
 ## If you change things later
 
@@ -367,6 +432,8 @@ changing anything under `src\`.
 - **Adding a language**: add a column to `I18N` and an entry to `LANGS` in `app.js`, a
   matching table in `static class L` in `Program.cs`, and a `STRINGS` entry in
   `src\web\slides\slides.js` (upstream first — see below).
+- **Adding a setting**: a `.menu-group` in `#settings-menu` (a `.menu-row` plus its
+  `.submenu`), an entry in `SUBS`, and the strings. Nothing goes in the toolbar itself.
 - **Changing slide layout or syntax**: change the originals in the md2slides companion
   tool, run its `py test.py`, then copy `template.html`, `slides.css` and `slides.js` back
   into `src\web\slides\` and rebuild. **Do not change only the copies here** — the

@@ -515,12 +515,10 @@ body {
 }
 .dz-open:hover { border-color: var(--accent); color: var(--accent); }
 
-/* ---------- Dropdown menus (theme / language / slides / save share one look) ---------- */
-#theme-wrap, #lang-wrap, #slides-wrap, #save-wrap { position: relative; display: flex; flex: 0 0 auto; }
-#theme-menu, #lang-menu, #slides-menu, #save-menu {
+/* ---------- Dropdown menus (settings / slides / save share one look) ---------- */
+#settings-wrap, #slides-wrap, #save-wrap { position: relative; display: flex; flex: 0 0 auto; }
+#settings-menu, #slides-menu, #save-menu, .submenu {
   position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
   z-index: 40;
   min-width: 178px;
   padding: 4px;
@@ -529,9 +527,18 @@ body {
   border-radius: 10px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, .35);
 }
-#theme-menu[hidden], #lang-menu[hidden], #slides-menu[hidden], #save-menu[hidden] { display: none; }
+#settings-menu, #slides-menu, #save-menu { top: calc(100% + 6px); right: 0; }
+#settings-menu[hidden], #slides-menu[hidden], #save-menu[hidden], .submenu[hidden] { display: none; }
+
+/* Submenus open to the LEFT: the settings button sits at the right edge of the toolbar,
+   so the usual rightwards flyout would run straight off the window. The -5px pulls the
+   first entry level with the row that opened it (4px padding + 1px border). */
+.menu-group { position: relative; }
+/* The theme submenu is nine rows tall; in a short window it would run off the bottom. */
+.submenu { top: -5px; right: calc(100% + 5px); max-height: calc(100vh - 52px); overflow-y: auto; }
 #lang-menu { min-width: 148px; }
-.theme-item, .lang-item, .menu-item {
+#assoc-menu { min-width: 246px; }
+.theme-item, .lang-item, .menu-item, .menu-row, .assoc-item {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -546,7 +553,8 @@ body {
   text-align: left;
   cursor: pointer;
 }
-.theme-item:hover, .lang-item:hover, .menu-item:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.theme-item:hover, .lang-item:hover, .menu-item:hover,
+.menu-row:hover, .menu-row.on, .assoc-item:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .theme-item .sw {
   flex: 0 0 auto;
   width: 14px;
@@ -556,11 +564,24 @@ body {
   /* Background on the left half, accent on the right: the theme's mood at a glance. */
   background: linear-gradient(135deg, var(--sw-bg) 0 50%, var(--sw-accent) 50% 100%);
 }
-.theme-item .name, .lang-item .name { flex: 1 1 auto; }
-.theme-item .tick, .lang-item .tick { flex: 0 0 auto; color: var(--accent); visibility: hidden; }
-.theme-item.on .tick, .lang-item.on .tick { visibility: visible; }
-.theme-item.on .name, .lang-item.on .name { font-weight: 600; }
-.theme-sep { height: 1px; margin: 4px 6px; background: var(--border-soft); }
+.theme-item .name, .lang-item .name, .menu-row .name, .assoc-item .name { flex: 1 1 auto; }
+.theme-item .tick, .lang-item .tick, .assoc-item .tick { flex: 0 0 auto; color: var(--accent); visibility: hidden; }
+.theme-item.on .tick, .lang-item.on .tick, .assoc-item.on .tick { visibility: visible; }
+.theme-item.on .name, .lang-item.on .name, .assoc-item.on .name { font-weight: 600; }
+.theme-sep, .menu-sep { height: 1px; margin: 4px 6px; background: var(--border-soft); }
+
+/* A settings row: label on the left, the value it currently holds on the right. */
+.menu-row .value { flex: 0 0 auto; color: var(--fg-dim); font-size: 12px; }
+.menu-row .arrow { flex: 0 0 auto; color: var(--fg-dim); font-size: 10px; }
+.assoc-item .name { font-family: var(--font-mono); }
+/* Explanatory small print at the foot of a submenu (what Windows will and won't let us do). */
+.menu-note {
+  padding: 4px 8px 3px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--fg-dim);
+  white-space: normal;
+}
 
 /* The main button and the ▾ sit flush against each other. (The open state is just
    .tool-btn.on, defined with the buttons above.) */

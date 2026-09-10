@@ -6,12 +6,15 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Globalization;
 using System.IO;
+using System.IO.Pipes;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
+using Microsoft.Win32;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -35,11 +38,14 @@ namespace MdViewer
             { "err.readFailed", "Could not read: " },
             { "err.notFound", "File not found: " },
             { "err.pdfEngine", "the print engine reported a failure" },
+            { "err.assocFailed", "the registry could not be written" },
             { "filter.open", "Markdown files|*.md;*.markdown;*.mdown;*.mkd;*.mdwn;*.txt|All files|*.*" },
             { "filter.save", "Markdown files|*.md;*.markdown|Text files|*.txt|All files|*.*" },
             { "filter.export", "HTML slides|*.html;*.htm|All files|*.*" },
             { "filter.exportDoc", "HTML document|*.html;*.htm|All files|*.*" },
             { "filter.pdf", "PDF document|*.pdf|All files|*.*" },
+            { "assoc.type", "Markdown Document" },
+            { "assoc.verb", "Open with MD Viewer" },
             { "file.untitled", "Untitled.md" },
             { "file.slides", "slides.html" },
             { "file.doc", "document.html" },
@@ -57,11 +63,14 @@ namespace MdViewer
             { "err.readFailed", "無法讀取：" },
             { "err.notFound", "找不到檔案：" },
             { "err.pdfEngine", "列印引擎回報失敗" },
+            { "err.assocFailed", "無法寫入登錄檔" },
             { "filter.open", "Markdown 檔案|*.md;*.markdown;*.mdown;*.mkd;*.mdwn;*.txt|所有檔案|*.*" },
             { "filter.save", "Markdown 檔案|*.md;*.markdown|文字檔|*.txt|所有檔案|*.*" },
             { "filter.export", "HTML 投影片|*.html;*.htm|所有檔案|*.*" },
             { "filter.exportDoc", "HTML 文件|*.html;*.htm|所有檔案|*.*" },
             { "filter.pdf", "PDF 文件|*.pdf|所有檔案|*.*" },
+            { "assoc.type", "Markdown 文件" },
+            { "assoc.verb", "以 MD Viewer 開啟" },
             { "file.untitled", "未命名.md" },
             { "file.slides", "投影片.html" },
             { "file.doc", "文件.html" },
@@ -90,6 +99,314 @@ namespace MdViewer
         }
     }
 
+    // File association. Everything lives under HKCU\Software\Classes, so no elevation is
+    // needed and nothing is written for other users.
+    //
+    // What this can and cannot do: registering puts MD Viewer in Explorer's "Open with"
+    // list (via OpenWithProgids) and adds our own verb. It deliberately does NOT try to
+    // become the *default* handler — that is HKCU\...\FileExts\<ext>\UserChoice, which
+    // Windows 8 and later protect with a hash; writing it directly gets the value thrown
+    // away and can reset the association altogether. Only the user can set a default,
+    // from the same "Open with" menu, which is what the note in the settings menu says.
+    static class Assoc
+    {
+        internal const string ProgId = "MdViewer.md";
+        internal static readonly string[] Exts = { ".md", ".markdown", ".mdown", ".mkd" };
+
+        const string Verb = "MdViewer.open";                 // our verb, under SystemFileAssociations
+        const string Classes = @"Software\Classes\";
+        const string AppKey = Classes + @"Applications\MdViewer.exe";
+
+        const int SHCNE_ASSOCCHANGED = 0x08000000;
+        const uint SHCNF_IDLIST = 0x0000;
+
+        [DllImport("shell32.dll")]
+        static extern void SHChangeNotify(int eventId, uint flags, IntPtr item1, IntPtr item2);
+
+        static string Exe { get { return Application.ExecutablePath; } }
+        static string Command { get { return "\"" + Exe + "\" \"%1\""; } }
+        static string IconRef { get { return "\"" + Exe + "\",0"; } }
+        static string VerbKey(string ext)
+        {
+            return Classes + @"SystemFileAssociations\" + ext + @"\shell\" + Verb;
+        }
+
+        // Only ever write extensions we know about: this value arrives from the web side.
+        static string Norm(string ext)
+        {
+            if (string.IsNullOrEmpty(ext)) return null;
+            string e = ext.Trim().ToLowerInvariant();
+            if (!e.StartsWith(".")) e = "." + e;
+            foreach (string known in Exts) if (known == e) return e;
+            return null;
+        }
+
+        static void SetDefault(string path, string value)
+        {
+            using (RegistryKey k = Registry.CurrentUser.CreateSubKey(path))
+                if (k != null) k.SetValue(null, value);
+        }
+
+        static string GetDefault(string path)
+        {
+            using (RegistryKey k = Registry.CurrentUser.OpenSubKey(path))
+                return k == null ? null : k.GetValue(null) as string;
+        }
+
+        static void Kill(string path)
+        {
+            try { Registry.CurrentUser.DeleteSubKeyTree(path, false); }
+            catch { }
+        }
+
+        // Delete a key only if it is now completely empty — anything the user (or another
+        // program) put there keeps it alive.
+        static void PruneEmpty(string path)
+        {
+            try
+            {
+                using (RegistryKey k = Registry.CurrentUser.OpenSubKey(path))
+                {
+                    if (k == null) return;
+                    if (k.ValueCount > 0 || k.SubKeyCount > 0) return;
+                }
+                Registry.CurrentUser.DeleteSubKey(path, false);
+            }
+            catch { }
+        }
+
+        static void WriteProgId()
+        {
+            SetDefault(Classes + ProgId, L.T("assoc.type"));
+            SetDefault(Classes + ProgId + @"\DefaultIcon", IconRef);
+            SetDefault(Classes + ProgId + @"\shell\open\command", Command);
+        }
+
+        // The "Open with → Choose another app" list reads this one.
+        static void WriteApp()
+        {
+            using (RegistryKey k = Registry.CurrentUser.CreateSubKey(AppKey))
+                if (k != null) k.SetValue("FriendlyAppName", "MD Viewer");
+            SetDefault(AppKey + @"\DefaultIcon", IconRef);
+            SetDefault(AppKey + @"\shell\open\command", Command);
+        }
+
+        // On Windows 11 this lands under "Show more options" (Shift+F10); the first-level
+        // menu there needs an IExplorerCommand in an MSIX package, which is not something
+        // a single portable exe can be. "Open with" works in both menus, and is the
+        // registration that actually matters.
+        static void WriteVerb(string ext)
+        {
+            SetDefault(VerbKey(ext), L.T("assoc.verb"));
+            using (RegistryKey k = Registry.CurrentUser.CreateSubKey(VerbKey(ext)))
+                if (k != null) k.SetValue("Icon", IconRef);
+            SetDefault(VerbKey(ext) + @"\command", Command);
+        }
+
+        internal static bool IsOn(string ext)
+        {
+            using (RegistryKey k = Registry.CurrentUser.OpenSubKey(
+                Classes + ext + @"\OpenWithProgids"))
+                return k != null && k.GetValue(ProgId) != null;
+        }
+
+        internal static bool AnyOn()
+        {
+            foreach (string e in Exts) if (IsOn(e)) return true;
+            return false;
+        }
+
+        internal static bool Register(IEnumerable<string> exts)
+        {
+            try
+            {
+                WriteProgId();
+                WriteApp();
+                foreach (string raw in exts)
+                {
+                    string ext = Norm(raw);
+                    if (ext == null) continue;
+                    using (RegistryKey k = Registry.CurrentUser.CreateSubKey(
+                        Classes + ext + @"\OpenWithProgids"))
+                        if (k != null) k.SetValue(ProgId, new byte[0], RegistryValueKind.None);
+                    using (RegistryKey k = Registry.CurrentUser.CreateSubKey(
+                        AppKey + @"\SupportedTypes"))
+                        if (k != null) k.SetValue(ext, "");
+                    WriteVerb(ext);
+                }
+                Changed();
+                return true;
+            }
+            catch { return false; }
+        }
+
+        internal static bool Unregister(IEnumerable<string> exts)
+        {
+            try
+            {
+                foreach (string raw in exts)
+                {
+                    string ext = Norm(raw);
+                    if (ext == null) continue;
+                    // Only our own value comes out; the extension's own key stays put.
+                    using (RegistryKey k = Registry.CurrentUser.OpenSubKey(
+                        Classes + ext + @"\OpenWithProgids", true))
+                        if (k != null) k.DeleteValue(ProgId, false);
+                    using (RegistryKey k = Registry.CurrentUser.OpenSubKey(
+                        AppKey + @"\SupportedTypes", true))
+                        if (k != null) k.DeleteValue(ext, false);
+                    Kill(VerbKey(ext));
+                    // Registering may have created these; leave nothing empty behind.
+                    PruneEmpty(Classes + ext + @"\OpenWithProgids");
+                    PruneEmpty(Classes + ext);
+                    PruneEmpty(Classes + @"SystemFileAssociations\" + ext + @"\shell");
+                    PruneEmpty(Classes + @"SystemFileAssociations\" + ext);
+                }
+                if (!AnyOn())                     // nothing left pointing at them
+                {
+                    Kill(Classes + ProgId);
+                    Kill(AppKey);
+                }
+                Changed();
+                return true;
+            }
+            catch { return false; }
+        }
+
+        internal static Dictionary<string, object> Status()
+        {
+            var states = new Dictionary<string, object>();
+            foreach (string e in Exts) states[e] = IsOn(e);
+            var d = new Dictionary<string, object>();
+            d["ok"] = true;
+            d["states"] = states;
+            return d;
+        }
+
+        // The exe is meant to be copied around, and a registration records an absolute
+        // path. If it has gone stale, quietly point it at wherever we are running from
+        // now. Nothing is written unless it is actually wrong.
+        internal static void RefreshStale()
+        {
+            try
+            {
+                if (!AnyOn()) return;
+                if (string.Equals(GetDefault(Classes + ProgId + @"\shell\open\command"),
+                                  Command, StringComparison.OrdinalIgnoreCase)) return;
+                var on = new List<string>();
+                foreach (string e in Exts) if (IsOn(e)) on.Add(e);
+                Register(on);
+            }
+            catch { }
+        }
+
+        // The verb's label was baked in at the language in force when it was registered.
+        internal static void RelabelVerb()
+        {
+            try
+            {
+                bool any = false;
+                foreach (string e in Exts) if (IsOn(e)) { WriteVerb(e); any = true; }
+                if (any) Changed();
+            }
+            catch { }
+        }
+
+        // Without this Explorer keeps showing the old association until it is restarted.
+        static void Changed()
+        {
+            try { SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, IntPtr.Zero, IntPtr.Zero); }
+            catch { }
+        }
+    }
+
+    // Second and later launches hand their file list to the window that is already open
+    // and exit. A named pipe rather than WM_COPYDATA: no window handle to find, and no
+    // guessing at a window title that changes with the active tab.
+    static class SingleInstance
+    {
+        const int ASFW_ANY = -1;
+        static NamedPipeServerStream current;
+        static volatile bool stopped;
+
+        [DllImport("user32.dll")]
+        static extern bool AllowSetForegroundWindow(int processId);
+
+        static string PipeName
+        {
+            // Per user: two people on the same machine each get their own window.
+            get { return "MdViewer.ipc." + Environment.UserName; }
+        }
+
+        internal static bool Handoff(List<string> files)
+        {
+            try
+            {
+                // Foreground lock: without this the running instance can flash in the
+                // taskbar instead of coming to the front.
+                try { AllowSetForegroundWindow(ASFW_ANY); }
+                catch { }
+                using (var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.Out))
+                {
+                    // Connect retries until the pipe appears, which covers the window
+                    // between the primary taking the mutex and its server being up.
+                    pipe.Connect(4000);
+                    byte[] data = Encoding.UTF8.GetBytes(string.Join("\n", files.ToArray()));
+                    pipe.Write(data, 0, data.Length);
+                    pipe.Flush();
+                }
+                return true;
+            }
+            catch { return false; }
+        }
+
+        // onFiles runs on the pipe thread and may be handed an empty array — launching the
+        // exe with no arguments should still bring the existing window forward.
+        internal static void Serve(Action<string[]> onFiles)
+        {
+            var t = new Thread(delegate () { Loop(onFiles); });
+            t.IsBackground = true;
+            t.Start();
+        }
+
+        static void Loop(Action<string[]> onFiles)
+        {
+            while (!stopped)
+            {
+                try
+                {
+                    var server = new NamedPipeServerStream(PipeName, PipeDirection.In, 1,
+                        PipeTransmissionMode.Byte, PipeOptions.None);
+                    current = server;
+                    using (server)
+                    {
+                        server.WaitForConnection();
+                        if (stopped) return;
+                        string text;
+                        using (var reader = new StreamReader(server, Encoding.UTF8))
+                            text = reader.ReadToEnd();
+                        var list = new List<string>();
+                        foreach (string line in text.Split('\n'))
+                            if (line.Trim().Length > 0) list.Add(line.Trim());
+                        onFiles(list.ToArray());
+                    }
+                }
+                catch
+                {
+                    if (!stopped) Thread.Sleep(200);   // don't spin if the pipe is unusable
+                }
+            }
+        }
+
+        // Disposing the stream is what breaks the blocking WaitForConnection.
+        internal static void Stop()
+        {
+            stopped = true;
+            try { if (current != null) current.Dispose(); }
+            catch { }
+        }
+    }
+
     static class Program
     {
         internal const string AppHost = "mdviewer.local";
@@ -98,9 +415,57 @@ namespace MdViewer
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         static extern bool SetDllDirectory(string path);
 
+        // Held for the lifetime of the process: dropping it would let a second instance
+        // believe it is the first one.
+        static Mutex instanceLock;
+        internal static bool IsPrimary { get { return instanceLock != null; } }
+
         [STAThread]
         static void Main(string[] args)
         {
+            // Registering the file association needs none of what follows — no WebView2,
+            // no native loader — so it is answered here and the process exits. A winexe
+            // has no console, so the exit code is the only channel a script gets.
+            foreach (string a in args)
+            {
+                if (a.Equals("--register", StringComparison.OrdinalIgnoreCase))
+                {
+                    Environment.ExitCode = Assoc.Register(Assoc.Exts) ? 0 : 1;
+                    return;
+                }
+                if (a.Equals("--unregister", StringComparison.OrdinalIgnoreCase))
+                {
+                    Environment.ExitCode = Assoc.Unregister(Assoc.Exts) ? 0 : 1;
+                    return;
+                }
+            }
+
+            // One window, several tabs. Explorer calls us once per file, so without this,
+            // opening five files from the right-click menu means five windows — and five
+            // processes writing session.json over each other. --dev stays out of it, or
+            // the instance test.py launches would be handed to whatever window the user
+            // already has open and the whole run would talk to the wrong process.
+            bool dev = false;
+            var files = new List<string>();
+            foreach (string a in args)
+            {
+                if (a.Equals("--dev", StringComparison.OrdinalIgnoreCase)) dev = true;
+                else files.Add(a);
+            }
+            if (!dev)
+            {
+                bool first;
+                instanceLock = new Mutex(true, @"Local\MdViewer.Instance", out first);
+                if (!first)
+                {
+                    instanceLock.Dispose();
+                    instanceLock = null;
+                    // If the running instance is on its way out and never answers, fall
+                    // through and open a window of our own rather than losing the files.
+                    if (SingleInstance.Handoff(files)) return;
+                }
+            }
+
             AppDomain.CurrentDomain.AssemblyResolve += ResolveEmbedded;
             try
             {
@@ -112,6 +477,9 @@ namespace MdViewer
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
+            // A registration records an absolute path, and this exe is meant to be copied
+            // around; if it has moved, point the association at where it is now.
+            Assoc.RefreshStale();
             Run(args);
         }
 
@@ -184,6 +552,8 @@ namespace MdViewer
         readonly List<string> folderRoots = new List<string>();
         readonly Dictionary<string, TextFormat> fileFormats =
             new Dictionary<string, TextFormat>(StringComparer.OrdinalIgnoreCase);
+        // Files handed over by another instance before the web side was ready to take them.
+        readonly List<string> pendingFiles = new List<string>();
         int dirtyCount;
         bool devMode;
         bool ready;
@@ -218,7 +588,12 @@ namespace MdViewer
             Controls.Add(web);
 
 
-            Shown += delegate { InitWebView(); };
+            Shown += delegate
+            {
+                InitWebView();
+                // Only the instance that holds the mutex listens; --dev never does.
+                if (!devMode && Program.IsPrimary) SingleInstance.Serve(OnHandoff);
+            };
             Activated += OnActivated;
             FormClosing += OnFormClosing;
         }
@@ -348,6 +723,39 @@ namespace MdViewer
         {
             ready = true;
             if (startupArgs.Length > 0) SendFiles(startupArgs, true);
+            if (pendingFiles.Count > 0)          // handed over before the page was up
+            {
+                SendFiles(pendingFiles.ToArray(), false);
+                pendingFiles.Clear();
+            }
+        }
+
+        // Another instance was launched and gave us its files. This arrives on the pipe
+        // thread, so everything real happens back on the UI thread.
+        void OnHandoff(string[] paths)
+        {
+            try
+            {
+                BeginInvoke((MethodInvoker)delegate
+                {
+                    RestoreAndFocus();
+                    if (paths.Length == 0) return;       // a bare launch: just come forward
+                    if (ready) SendFiles(paths, false);
+                    else pendingFiles.AddRange(paths);
+                });
+            }
+            catch { }                                    // the window is going away
+        }
+
+        [DllImport("user32.dll")]
+        static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        void RestoreAndFocus()
+        {
+            if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+            Activate();
+            try { SetForegroundWindow(Handle); }
+            catch { }
         }
 
         // Window regained focus → tell the web side to check whether the current tab's file
@@ -411,7 +819,10 @@ namespace MdViewer
                 case "stat": CmdStat(id, m); break;
                 case "sessionSave": CmdSessionSave(m); break;
                 case "sessionLoad": CmdSessionLoad(id); break;
-                case "lang": L.Set(Str(Get(m, "lang"))); break;
+                case "assocStatus": Reply(id, Assoc.Status()); break;
+                case "assocSet": CmdAssocSet(id, m); break;
+                // Our context-menu verb carries a label, so it follows the UI language too.
+                case "lang": L.Set(Str(Get(m, "lang"))); Assoc.RelabelVerb(); break;
                 case "quit": Close(); break;
             }
         }
@@ -646,6 +1057,21 @@ namespace MdViewer
 
         // Report the current on-disk state of these paths; the web side uses it to tell
         // whether a file was changed by another program.
+        void CmdAssocSet(object id, Dictionary<string, object> m)
+        {
+            // The extension list is a nested array, so it has to come back through
+            // StrList() — see the note there; `as object[]` would always be null.
+            List<string> exts = StrList(Get(m, "exts"));
+            object on = Get(m, "on");
+            bool add = on is bool && (bool)on;
+            if (!(add ? Assoc.Register(exts) : Assoc.Unregister(exts)))
+            {
+                ReplyError(id, L.T("err.assocFailed"));
+                return;
+            }
+            Reply(id, Assoc.Status());
+        }
+
         void CmdStat(object id, Dictionary<string, object> m)
         {
             var list = new List<object>();
@@ -966,6 +1392,7 @@ namespace MdViewer
                     MessageBoxDefaultButton.Button2);
                 if (r != DialogResult.Yes) { e.Cancel = true; return; }
             }
+            SingleInstance.Stop();
             SaveBounds();
         }
 
