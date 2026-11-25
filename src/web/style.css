@@ -431,6 +431,7 @@ body {
 .divider:hover::after, .divider.dragging::after { background: var(--accent); }
 
 .preview-wrap {
+  position: relative;      /* the copy bar is positioned against the scrolled content */
   flex: 1 1 auto;
   min-width: 0;
   overflow: auto;
@@ -441,6 +442,40 @@ body {
   margin: 0 auto;
   padding: 24px 32px 96px;
 }
+
+/* ---------- Copy buttons over a code block, table or quote ---------- */
+/* One bar per pane, moved by app.js to the top right of the block under the pointer (or
+   just beside a table narrower than the column). The anchoring side is chosen there. */
+.copy-bar {
+  position: absolute;
+  z-index: 4;              /* under the drop hint (5) and the editor toggle (6) */
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .12);
+  opacity: .92;
+}
+.copy-bar[hidden] { display: none; }
+.copy-bar:hover { opacity: 1; }
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: 12px/1 var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.copy-btn:hover { background: var(--bg-alt); color: var(--accent); }
+.copy-btn.done { color: var(--accent); }
 
 /* ---------- Floating editor-collapse button ---------- */
 .editor-toggle {
@@ -868,7 +903,7 @@ body {
    are always the light palette. */
 @media print {
   #tabbar, #statusbar, .editor-wrap, .divider, .editor-toggle, .dropzone,
-  #ext-dialog, #findbar { display: none !important; }
+  #ext-dialog, #findbar, .copy-bar { display: none !important; }
   html, body { height: auto; overflow: visible; }
   body { display: block; }
   #panes { position: static; overflow: visible; }

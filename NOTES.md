@@ -3,7 +3,8 @@
 Finished 2026-07-21. External-change detection, a session file, nine themes and slide
 export followed on 2026-07-28; previewing slides in a tab on 2026-07-31; the
 English / 正體中文 interface on 2026-08-12; saving a document as HTML or PDF on
-2026-09-03; find and replace on 2026-09-04.
+2026-09-03; find and replace on 2026-09-04; copy buttons on blocks and a wheel-scrolled
+tab strip on 2026-11-25.
 
 What follows is the *why* behind the design, and the traps hit getting there. Read this
 before changing anything. Usage lives in [README.md](README.md).
@@ -317,6 +318,45 @@ reading contents directly — only then saving needs a "save as".
   `max-width: calc(100% - 348px)` — a hard-coded reservation that went stale the moment a
   button was added, leaving the labels wrapping onto two lines. `#tabs` now shrinks and
   scrolls while every button is `flex: 0 0 auto`.
+  - Its scrollbar is hidden, so with many tabs open there was nothing to grab: a `wheel`
+    handler on `#tabs` turns an ordinary vertical wheel into sideways scrolling. Sideways
+    gestures (tilt wheels, touchpads) are left to scroll natively, and nothing is
+    prevented when the strip does not overflow.
+- **Copy buttons sit on code blocks, tables and quotes**, in two flavours: "Text" (code as
+  written; a table as tab-separated rows, so Excel splits it into cells) and "Formatted"
+  (the same plus an HTML flavour with the look inlined, for Word / Outlook / Excel).
+  - **One bar per pane, moved around, never a button inside each block.** The bar lives in
+    `.preview-wrap` beside the `<article>`, so the rendered DOM stays exactly what
+    `renderInto()` produced: "Save as HTML", the preview search and printing never see it,
+    and the next re-render cannot wipe it. The block is found with
+    `elementsFromPoint()` at the last pointer position rather than from the event target,
+    which makes scrolling under a still pointer, a re-render (`render()` calls
+    `pane.copyRefresh`) and the pointer resting on the bar itself all the same case.
+  - **Tables are `display:block`** (so they can scroll sideways), which makes their box as
+    wide as the column however narrow the grid inside is. Placing by the box left the bar
+    floating in empty space, so it goes by the first row's right edge, and sits just
+    outside the grid's corner when there is room (no buttons over the headings).
+  - **The anchoring side matters.** On a block the bar hangs from `right`, beside a table
+    from `left`. The label changes width when it briefly says "Copied", and anchored the
+    wrong way the bar grew back across the very table it was moved off — invisible in
+    Chinese, where 格式 and 已複製 are nearly the same width; the English test caught it.
+  - **"Formatted" is computed under the light palette** with `forceLightSkin()`, and every
+    `getComputedStyle()` read happens before the restore in one synchronous stretch, so the
+    window never paints the light palette (unlike the PDF route, which has to wait for the
+    host). Inherited properties are written only where they differ from the parent;
+    margins also go on tags a word processor gives margins of its own (a quote would
+    otherwise arrive indented).
+  - What the computed style hands back is not what a word processor reads, so three things
+    are translated: `align="left"` on a cell computes to `-webkit-left`; a `color-mix()`
+    computes to `color(srgb … / a)`; and alpha in general means nothing on paste —
+    `flatColor()` turns them all into plain `rgb()` over white. marked's trailing newline
+    on a listing is dropped too: a browser swallows it, Word draws an empty last line.
+  - Images from our `__local` origin become data URIs through a canvas (they are already
+    decoded, so that is synchronous); classes, ids, `data-*` and in-app links are stripped.
+  - Writing uses `navigator.clipboard.write()` with a `ClipboardItem`, falling back to
+    `execCommand('copy')` with a `copy` handler. Both were confirmed to land `text/html` and
+    `text/plain` on the real Windows clipboard from this origin. `mousedown` on the bar is
+    prevented, so focus and the caret stay in the editor.
 - **Everything configurable lives behind one `⚙` in the toolbar.** Theme and language used
   to be two separate buttons, and each new setting would have wanted a third — in a toolbar
   whose only slack is `#tabs` giving way. `#settings-menu` now holds a row per setting, each
@@ -381,7 +421,7 @@ reading contents directly — only then saving needs a "save as".
 
 ## Verification
 
-`py src\test\test.py` — **164 end-to-end checks**. It generates its own fixtures and shuts
+`py src\test\test.py` — **184 end-to-end checks**. It generates its own fixtures and shuts
 the program down when finished.
 
 It launches `MdViewer.exe --dev` (which opens a remote debugging port on `127.0.0.1:9333`)
@@ -401,6 +441,10 @@ the tests drive the real functions through `window.__mdv` with one.
 
 Requires `pip install websocket-client`. Rebuild with `build.cmd` and run this after
 changing anything under `src\`.
+
+The copy-button checks click with real mouse events and read the **real OS clipboard**
+back (through PowerShell), so a run overwrites it for a moment; the text that was there
+before is saved first and put back afterwards, line endings included.
 
 The file-association checks drive **`.mkd` only**, never `.md`: a test run must not disturb
 whatever the person running it has set up for their own Markdown files, and there is a check
@@ -442,6 +486,9 @@ the reopen check at the end reads it.
 - **Changing the editor's font, padding or wrapping**: it lives in the shared
   `.editor, .editor-marks` rule in `style.css`. Changing one without the other silently
   breaks the source search's highlighting.
+- **Changing which blocks get copy buttons**: `COPY_BLOCKS` in `app.js` is the selector;
+  `blockText()` decides what "Text" means for each kind. The innermost match wins, so code
+  inside a quote copies just the code.
 - **Changing how an exported document looks**: `src\web\export.html` holds only the
   standalone-page overrides — the app shell's flex/fixed-height layout undone, and the
   centred column. Everything else comes from the inlined `style.css`, so a change to the

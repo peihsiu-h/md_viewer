@@ -32,6 +32,8 @@ MdViewer.exe --unregister   # take it back out
 | Hide / show the editor | the translucent `‹‹` `››` button on the divider, "Editor" in the toolbar, or `Ctrl+E` |
 | Save back to the original file | `Ctrl+S` |
 | Switch tabs | `Alt+1`–`Alt+9`, `Ctrl+Tab` |
+| Scroll through tabs that don't fit | the mouse wheel over the tab strip |
+| Copy a code block, table or quote | point at it, then "Text" or "Formatted" at its top right |
 | Find | `Ctrl+F`, or `🔍` in the toolbar; `Enter` / `Shift+Enter` or `F3` step, `Esc` closes |
 | Replace | `Ctrl+H` (source only) |
 | Settings (language, theme, file association) | `⚙` at the right of the toolbar, or `Ctrl+,` |
@@ -86,6 +88,13 @@ editor on the left at any time.
   finds the words you are reading, and it keeps working with the editor collapsed. Every
   match is highlighted, the current one more strongly, and `Ctrl+H` adds replace — on the
   source, since the preview is a rendered result.
+- **One-click copy for code blocks, tables and quotes.** Point at one in the preview and
+  two buttons appear at its top right, so there is no selecting by hand:
+  - "Text" copies plain text — code exactly as written, and a table as tab-separated
+    rows, which Excel splits back into cells.
+  - "Formatted" copies the text *with* its look, so Word, Outlook or Excel receive a real
+    table or a highlighted listing. Like the PDF it always uses the light colours, whatever
+    the current theme.
 - **A document can be handed on as HTML or PDF** (the `▾` next to "Save"):
   - "Save as HTML…" (`Ctrl+Shift+H`) writes the document exactly as the preview shows it,
     in **one self-contained file** — the stylesheet is inlined and **relative-path images

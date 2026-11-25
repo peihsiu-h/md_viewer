@@ -245,6 +245,41 @@ def set_lang(cdp, lang):
     time.sleep(0.5)
 
 
+# ---- The OS clipboard (the copy buttons write real clipboard data) ----
+def clip_read():
+    """Return the clipboard's (plain text, raw CF_HTML) flavours, exactly as stored."""
+    ps = ("Add-Type -AssemblyName System.Windows.Forms;"
+          "[Console]::OutputEncoding=[Text.Encoding]::UTF8;"
+          "@{text=[Windows.Forms.Clipboard]::GetText();"
+          "html=[Windows.Forms.Clipboard]::GetText([Windows.Forms.TextDataFormat]::Html)}"
+          " | ConvertTo-Json -Compress")
+    out = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", ps],
+                         capture_output=True, text=True, encoding="utf-8").stdout
+    d = json.loads(out or "{}")
+    return d.get("text") or "", d.get("html") or ""
+
+
+def clip_write(text):
+    """Put the tester's own clipboard text back once the copy checks are done. Sent as
+    bytes so that not even its line endings change on the way."""
+    ps = ("Add-Type -AssemblyName System.Windows.Forms;"
+          "[Console]::InputEncoding=[Text.Encoding]::UTF8;"
+          "$t=[Console]::In.ReadToEnd();"
+          "if ($t) { [Windows.Forms.Clipboard]::SetText($t) } else { [Windows.Forms.Clipboard]::Clear() }")
+    subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", ps],
+                   input=text.encode("utf-8"), capture_output=True)
+
+
+def mouse_move(cdp, x, y):
+    cdp.call("Input.dispatchMouseEvent", type="mouseMoved", x=x, y=y)
+
+
+def mouse_click(cdp, x, y):
+    mouse_move(cdp, x, y)
+    for kind in ("mousePressed", "mouseReleased"):
+        cdp.call("Input.dispatchMouseEvent", type=kind, x=x, y=y, button="left", clickCount=1)
+
+
 class CDP:
     def __init__(self, ws):
         self.ws = ws
@@ -1274,6 +1309,153 @@ def main():
           st["hidden"] and "cannot be searched" in st["info"], st)
     click_tab(cdp, "demo.md")
     time.sleep(0.5)
+
+    # ---------- Tab strip: the mouse wheel scrolls it ----------
+    before = cdp.ev("[...document.querySelectorAll('.tab')].map(t => t.dataset.id)")
+    for _ in range(25):
+        cdp.ev("document.querySelector('#new-tab').click()")
+    time.sleep(0.5)
+    geo = cdp.ev("""(() => {
+      const t = document.querySelector('#tabs'), r = t.getBoundingClientRect();
+      t.scrollLeft = 0;
+      return {x: Math.round(r.left + 80), y: Math.round(r.top + r.height / 2),
+              over: t.scrollWidth - t.clientWidth};
+    })()""")
+    check("25 more tabs overflow the tab strip", geo["over"] > 200, geo)
+
+    def wheel(dy):
+        cdp.call("Input.dispatchMouseEvent", type="mouseWheel", x=geo["x"], y=geo["y"],
+                 deltaX=0, deltaY=dy)
+        time.sleep(0.3)
+        return cdp.ev("document.querySelector('#tabs').scrollLeft")
+
+    sl = wheel(120)
+    check("a vertical wheel over the tab strip scrolls it sideways", 100 <= sl <= 140, sl)
+    sl = wheel(-120)
+    check("wheeling the other way scrolls it back", sl == 0, sl)
+    cdp.ev("""(() => {
+      const keep = new Set(%s);
+      [...document.querySelectorAll('.tab')].filter(t => !keep.has(t.dataset.id))
+        .forEach(t => t.querySelector('.close').click());
+    })()""" % json.dumps(before))
+    time.sleep(0.5)
+    n = cdp.ev("document.querySelectorAll('.tab').length")
+    check("the extra tabs close again", n == len(before), n)
+
+    # ---------- Copy buttons on code blocks, tables and quotes ----------
+    # Driven with real mouse events and read back from the real OS clipboard; the
+    # tester's own clipboard text is put back afterwards.
+    click_tab(cdp, "demo.md")
+    time.sleep(0.6)
+    saved_clip = clip_read()[0]
+    pick_theme(cdp, "github-dark")             # "Formatted" must still come out light
+    cdp.ev("document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))")
+    cdp.ev("document.querySelector('.pane:not([hidden]) .editor').focus()")
+    fib = re.search(r"```python\n(.*?)\n```", DEMO_MD, re.S).group(1)
+
+    def hover(sel):
+        r = cdp.ev("""(() => {
+          const n = document.querySelector('.pane:not([hidden]) .preview ' + %s);
+          n.scrollIntoView({block: 'center'});
+          const r = n.getBoundingClientRect();
+          return {x: Math.round(r.left + 30), y: Math.round(r.top + 12),
+                  top: r.top, right: r.right};
+        })()""" % json.dumps(sel))
+        time.sleep(0.2)
+        mouse_move(cdp, r["x"], r["y"])
+        time.sleep(0.25)
+        return r
+
+    def bar_state():
+        return cdp.ev("""(() => {
+          const b = document.querySelector('.pane:not([hidden]) .copy-bar');
+          const r = b.getBoundingClientRect();
+          return {hidden: b.hidden, top: r.top, right: r.right,
+                  labels: [...b.querySelectorAll('.copy-btn')].map(x => x.textContent)};
+        })()""")
+
+    def press(mode):
+        r = cdp.ev("""(() => {
+          const r = document.querySelector('.pane:not([hidden]) .copy-btn[data-mode=%s]')
+            .getBoundingClientRect();
+          return {x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)};
+        })()""" % mode)
+        mouse_click(cdp, r["x"], r["y"])
+        time.sleep(0.5)
+        text, raw = clip_read()               # Chromium stores the text with CRLF
+        return text.replace("\r\n", "\n"), raw[raw.find("<!--StartFragment-->"):] if raw else ""
+
+    b = hover("pre")
+    st = bar_state()
+    check("hovering a code block shows the copy bar at its top right",
+          not st["hidden"] and abs(st["top"] - (b["top"] + 6)) < 2
+          and abs(st["right"] - (b["right"] - 6)) < 2, (b, st))
+    text, html = press("text")
+    check("Text copies the code exactly as written, and only as text",
+          text == fib and not html, (text, html[:80]))
+    st = cdp.ev("""(() => ({focus: document.activeElement.className,
+      label: document.querySelector('.pane:not([hidden]) .copy-btn[data-mode=text]').textContent}))()""")
+    check("the button says Copied, and focus stays in the editor",
+          st["label"] == "Copied" and "editor" in st["focus"], st)
+    text, html = press("rich")
+    check("Formatted copies the listing as HTML, highlighting included",
+          text == fib and "<pre" in html and "color: rgb(215, 58, 73)" in html, html[:200])
+    check("Formatted drops the newline marked puts at the end of a listing",
+          "\n</code>" not in html, html[-120:])
+
+    hover("table")
+    st = cdp.ev("""(() => {
+      const p = document.querySelector('.pane:not([hidden])');
+      const b = p.querySelector('.copy-bar').getBoundingClientRect();
+      const t = p.querySelector('.preview table').getBoundingClientRect();
+      const g = p.querySelector('.preview table tr').getBoundingClientRect();
+      return {left: b.left, right: b.right, w: b.width, box: t.right, grid: g.right};
+    })()""")
+    # The table's box spans the column; the bar goes by the grid inside it.
+    if st["box"] - st["grid"] >= st["w"] + 12:
+        ok = abs(st["left"] - (st["grid"] + 6)) < 2
+    else:
+        ok = abs(st["right"] - (min(st["grid"], st["box"]) - 6)) < 2
+    check("the copy bar follows a table's grid, beside it when there is room", ok, st)
+    text, html = press("text")
+    check("Text copies a table as tab-separated rows",
+          text == "Left\tCentre\tRight\na\tb\tc\na longer cell\tmid\t123", repr(text))
+    text, html = press("rich")
+    check("Formatted copies a real table with its look inlined",
+          "<table" in html and "border-collapse: collapse" in html and "class=" not in html
+          and "text-align: right" in html and "-webkit-" not in html, html[:300])
+    check("Formatted uses the light palette even on a dark theme",
+          "rgb(246, 247, 249)" in html and "rgb(22, 27, 34)" not in html
+          and "rgb(13, 17, 23)" not in html, html[:300])
+    check("the window itself stays on the dark theme",
+          cdp.ev("document.documentElement.dataset.skin") == "github-dark")
+
+    hover(".md-alert")
+    text, _ = press("text")
+    check("Text copies a quote as it reads, alert title included",
+          text.startswith("ℹ️ Note") and text.endswith("This is a note."), repr(text))
+
+    hover("p")
+    check("an ordinary paragraph gets no copy bar", bar_state()["hidden"])
+    hover("pre")
+    mouse_move(cdp, 5, 5)                      # onto the tab bar, out of the preview
+    time.sleep(0.25)
+    check("leaving the preview hides the copy bar", bar_state()["hidden"])
+
+    doc = cdp.ev("""(async () => { const t = window.__mdv.activeTab();
+      return await window.__mdv.buildDocument(t.pane.editor.value, 'x', t); })()""")
+    check("the copy bar never reaches a saved HTML document", 'class="copy-bar"' not in doc)
+
+    set_lang(cdp, "zh-Hant")
+    labels = bar_state()["labels"]
+    set_lang(cdp, "en")
+    check("the copy buttons follow the interface language", labels == ["文字", "格式"], labels)
+
+    pick_theme(cdp, "solarized-light")
+    cdp.ev("document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))")
+    clip_write(saved_clip)
+    check("the tester's clipboard text is put back, line endings included",
+          clip_read()[0] == saved_clip, len(saved_clip))
 
     # ---------- Session file (close and reopen restores tabs) ----------
     sess = os.path.join(os.environ["LOCALAPPDATA"], "MdViewer", "session.json")

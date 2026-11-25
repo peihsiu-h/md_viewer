@@ -122,6 +122,12 @@
       'find.none': 'no matches',
       'find.replaceOne': 'Replace',
       'find.replaceAll': 'All',
+      'copy.text': 'Text',
+      'copy.rich': 'Formatted',
+      'copy.textTitle': 'Copy as plain text (a table becomes tab-separated rows)',
+      'copy.richTitle': 'Copy with formatting, for pasting into Word, Outlook, Excel…',
+      'copy.done': 'Copied',
+      'copy.failed': 'Could not copy: {0}',
       'dialog.title': 'File changed on disk',
       'dialog.body': '“{0}” has changed on disk. Load the latest version?',
       'dialog.warn': 'This tab has unsaved changes; reloading will discard them.',
@@ -228,6 +234,12 @@
       'find.none': '找不到',
       'find.replaceOne': '取代',
       'find.replaceAll': '全部',
+      'copy.text': '文字',
+      'copy.rich': '格式',
+      'copy.textTitle': '只複製文字（表格會變成以 Tab 分隔的多行）',
+      'copy.richTitle': '複製文字＋排版，可直接貼到 Word、Outlook、Excel…',
+      'copy.done': '已複製',
+      'copy.failed': '複製失敗：{0}',
       'dialog.title': '檔案已被其他程式修改',
       'dialog.body': '「{0}」在磁碟上的內容已經變更。要載入最新版本嗎？',
       'dialog.warn': '目前分頁有未儲存的修改，重新載入會蓋掉。',
@@ -542,6 +554,8 @@
     decorateLinks(view, tab);
     decorateTaskLists(view, tab);
     decorateImages(view, tab);
+    // The block the copy bar was attached to has just been replaced.
+    if (tab.pane.copyRefresh) tab.pane.copyRefresh();
     updateStatus();
     // The preview's find Ranges pointed at the text nodes just replaced above.
     if (tab.id === state.activeId) findRefresh();
@@ -575,6 +589,8 @@
       dzOpen: $('.dz-open', node),
       dropzone: $('.dropzone', node),
       editorToggle: $('.editor-toggle', node),
+      copyBar: $('.copy-bar', node),
+      copyRefresh: null,     // set by wireCopyBar()
     };
   }
 
@@ -763,6 +779,7 @@
 
     p.dzOpen.addEventListener('click', () => openFiles());
     p.editorToggle.addEventListener('click', () => toggleEditor(tab));
+    wireCopyBar(tab);
 
     let depth = 0;
     p.root.addEventListener('dragenter', e => {
@@ -789,6 +806,250 @@
   }
 
   const hasFiles = e => e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+
+  /* ==================== Copying a block ====================
+   * Hovering a code block, table or quote in the preview shows two buttons at its top
+   * right. "Text" copies plain text: code exactly as written, a table as tab-separated
+   * rows (which Excel splits back into cells), anything else as it reads. "Formatted"
+   * adds an HTML flavour with the look written inline, so Word, Outlook or Excel receive
+   * a real table or a coloured listing; the plain text rides along for targets that only
+   * take text.
+   *
+   * There is one bar per pane, moved to whichever block the pointer is over, rather than
+   * a button inside every block: the rendered DOM stays exactly what renderInto() made,
+   * so exports, the preview search and printing never see the buttons.
+   */
+
+  const COPY_BLOCKS = 'pre, table, blockquote';
+
+  function blockText(block) {
+    if (block.tagName === 'PRE') return block.textContent.replace(/\n$/, '');
+    if (block.tagName === 'TABLE') {
+      return [...block.rows].map(row => [...row.cells]
+        .map(c => c.innerText.replace(/\s+/g, ' ').trim()).join('\t')).join('\n');
+    }
+    return block.innerText.replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  // Inherited properties are written only where they differ from the parent; the root
+  // gets all of them, since where it lands it has no parent of ours. Box properties are
+  // written where set. Margins also go on elements a word processor gives margins of its
+  // own, or a quote would arrive indented by the target's defaults.
+  const COPY_INHERITED = ['color', 'font-family', 'font-size', 'font-weight', 'font-style',
+    'line-height', 'text-align', 'white-space', 'list-style-type'];
+  const UA_MARGINS = /^(P|UL|OL|BLOCKQUOTE|PRE|H[1-6]|DL|DD|FIGURE|HR)$/;
+  const SIDES = ['top', 'right', 'bottom', 'left'];
+  // What the root would get anyway wherever it lands, so writing it is only noise.
+  const ROOT_DEFAULT = { 'font-style': 'normal', 'white-space': 'normal', 'text-align': 'start', 'list-style-type': 'disc' };
+  // A cell's align="left" computes to -webkit-left, which no word processor understands.
+  const ALIGN = { '-webkit-left': 'left', '-webkit-right': 'right', '-webkit-center': 'center', start: 'left', end: 'right' };
+
+  // Pasted documents know nothing of alpha, nor of color(srgb …), which is how Chromium
+  // reports a color-mix(); flatten both to rgb() over the white page they land on.
+  // Returns null for a fully transparent colour.
+  function flatColor(v) {
+    let rgb, a = 1;
+    let m = v.match(/^rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)$/);
+    if (m) {
+      rgb = [m[1], m[2], m[3]].map(Number);
+    } else if ((m = v.match(/^color\(srgb ([-\d.e]+) ([-\d.e]+) ([-\d.e]+)(?: \/ ([\d.]+))?\)$/))) {
+      rgb = [m[1], m[2], m[3]].map(c => Number(c) * 255);
+    } else {
+      return v;
+    }
+    if (m[4] != null) a = Number(m[4]);
+    if (a === 0) return null;
+    const out = rgb.map(c => Math.round(Math.min(255, Math.max(0, c * a + 255 * (1 - a)))));
+    return `rgb(${out.join(', ')})`;
+  }
+
+  function inlineStyle(node, cs, parent) {
+    const decl = [];
+    for (const p of COPY_INHERITED) {
+      const v = cs.getPropertyValue(p);
+      if (parent ? v === parent.getPropertyValue(p) : v === ROOT_DEFAULT[p]) continue;
+      const out = p === 'color' ? flatColor(v) : p === 'text-align' ? (ALIGN[v] || v) : v;
+      if (out) decl.push(`${p}: ${out}`);
+    }
+    const bg = flatColor(cs.backgroundColor);
+    if (bg) decl.push(`background-color: ${bg}`);
+    const borders = SIDES.map(s => {
+      const style = cs.getPropertyValue(`border-${s}-style`);
+      if (style === 'none' || style === 'hidden') return null;
+      const color = flatColor(cs.getPropertyValue(`border-${s}-color`)) || 'transparent';
+      return `${cs.getPropertyValue(`border-${s}-width`)} ${style} ${color}`;
+    });
+    if (borders[0] && borders.every(b => b === borders[0])) decl.push(`border: ${borders[0]}`);
+    else SIDES.forEach((s, i) => { if (borders[i]) decl.push(`border-${s}: ${borders[i]}`); });
+    const pad = SIDES.map(s => cs.getPropertyValue(`padding-${s}`));
+    if (pad.some(v => v !== '0px')) decl.push(`padding: ${pad.join(' ')}`);
+    if (!parent) {
+      decl.push('margin: 0');
+    } else {
+      const mar = SIDES.map(s => cs.getPropertyValue(`margin-${s}`));
+      if (UA_MARGINS.test(node.tagName) || mar.some(v => v !== '0px')) decl.push(`margin: ${mar.join(' ')}`);
+    }
+    if (cs.textDecorationLine && cs.textDecorationLine !== 'none') {
+      decl.push(`text-decoration: ${cs.textDecorationLine}`);
+    }
+    if (node.tagName === 'TABLE') decl.push('border-collapse: collapse');
+    return decl.join('; ');
+  }
+
+  // An image served from our own origin means nothing outside the app, so it travels as a
+  // data URI. It is already decoded, which lets a canvas do that synchronously.
+  function portableImage(src, dst) {
+    const url = src.currentSrc || src.src || '';
+    dst.removeAttribute('srcset');
+    if (url.startsWith(location.origin + '/') && src.complete && src.naturalWidth) {
+      try {
+        const c = document.createElement('canvas');
+        c.width = src.naturalWidth;
+        c.height = src.naturalHeight;
+        c.getContext('2d').drawImage(src, 0, 0);
+        dst.setAttribute('src', c.toDataURL('image/png'));
+      } catch { /* leave the address as it was */ }
+    } else if (url) {
+      dst.setAttribute('src', url);
+    }
+    const w = Math.round(src.getBoundingClientRect().width);
+    if (w) dst.setAttribute('width', w);
+  }
+
+  function blockHTML(block) {
+    const clone = block.cloneNode(true);
+    const src = [block, ...block.querySelectorAll('*')];
+    const dst = [clone, ...clone.querySelectorAll('*')];
+    // Pasted documents are white paper, so the colours are always the light palette, as
+    // with the PDF. Everything is read before restoring, inside one synchronous stretch,
+    // so the window never gets to paint the light palette.
+    const restore = forceLightSkin();
+    try {
+      const styles = new Map(src.map(n => [n, getComputedStyle(n)]));
+      src.forEach((s, i) => {
+        const d = dst[i];
+        const css = inlineStyle(s, styles.get(s), i ? styles.get(s.parentElement) : null);
+        if (css) d.setAttribute('style', css); else d.removeAttribute('style');
+        if (s.tagName === 'IMG') portableImage(s, d);
+        // Read the live state: the checked attribute is only what the source said.
+        if (s.tagName === 'INPUT' && s.type === 'checkbox') {
+          d.replaceWith(document.createTextNode(s.checked ? '☑ ' : '☐ '));
+        }
+      });
+    } finally {
+      restore();
+    }
+    // Classes, ids and data-* only mean something to our stylesheet; relative and #
+    // links only mean something inside the app.
+    for (const d of dst) {
+      for (const a of [...d.attributes]) {
+        if (/^(class|id|title|target|rel|data-.*)$/.test(a.name)) d.removeAttribute(a.name);
+      }
+      if (d.tagName === 'A' && !isAbsolute(d.getAttribute('href') || '')) d.removeAttribute('href');
+    }
+    // marked ends every listing with a newline; a browser swallows it at the end of a
+    // block, but a word processor turns it into an empty last line.
+    if (clone.tagName === 'PRE') {
+      const walker = document.createTreeWalker(clone, NodeFilter.SHOW_TEXT);
+      let last = null;
+      while (walker.nextNode()) last = walker.currentNode;
+      if (last) last.nodeValue = last.nodeValue.replace(/\n$/, '');
+    }
+    return clone.outerHTML;
+  }
+
+  async function writeClipboard(text, html) {
+    const flavours = { 'text/plain': text };
+    if (html != null) flavours['text/html'] = html;
+    if (navigator.clipboard && window.ClipboardItem) {
+      try {
+        const item = {};
+        for (const [type, data] of Object.entries(flavours)) item[type] = new Blob([data], { type });
+        await navigator.clipboard.write([new ClipboardItem(item)]);
+        return;
+      } catch { /* e.g. the document is not focused: fall back to a copy event */ }
+    }
+    let done = false;
+    const onCopy = e => {
+      for (const [type, data] of Object.entries(flavours)) e.clipboardData.setData(type, data);
+      e.preventDefault();
+      done = true;
+    };
+    document.addEventListener('copy', onCopy);
+    try { document.execCommand('copy'); } finally { document.removeEventListener('copy', onCopy); }
+    if (!done) throw new Error(tr('error.unknown'));
+  }
+
+  function showCopied(btn) {
+    const label = $('[data-i18n]', btn);
+    btn.classList.add('done');
+    label.textContent = tr('copy.done');
+    clearTimeout(btn.doneTimer);
+    btn.doneTimer = setTimeout(() => {
+      btn.classList.remove('done');
+      label.textContent = tr(label.dataset.i18n);
+    }, 1200);
+  }
+
+  function wireCopyBar(tab) {
+    const p = tab.pane, bar = p.copyBar, wrap = p.previewWrap;
+    const INSET = 6;
+    let target = null, inside = false, x = 0, y = 0;
+
+    // Pin the bar to the block's top right, in the scrolled content's coordinates (the
+    // wrap is its containing block). A block taller than the view keeps its buttons in
+    // sight while it is scrolled through, stopping at the block's bottom edge.
+    const place = () => {
+      bar.hidden = false;
+      const wr = wrap.getBoundingClientRect(), br = target.getBoundingClientRect();
+      // A table is display:block so it can scroll sideways, which makes its box as wide as
+      // the column however narrow the grid inside is. Go by the grid; and when that
+      // leaves room beside it, sit just outside its corner instead of over the headings.
+      let edge = br.right - INSET, beside = false;
+      if (target.tagName === 'TABLE' && target.rows.length) {
+        const grid = Math.min(br.right, target.rows[0].getBoundingClientRect().right);
+        beside = br.right - grid >= bar.offsetWidth + 2 * INSET;
+        edge = beside ? grid + INSET : grid - INSET;
+      }
+      const top = br.top - wr.top + wrap.scrollTop + INSET;
+      const last = br.bottom - wr.top + wrap.scrollTop - bar.offsetHeight - INSET;
+      bar.style.top = `${Math.max(top, Math.min(wrap.scrollTop + INSET, last))}px`;
+      // Over a block the bar hangs from its right end, beside a table from its left, so a
+      // label briefly turning into "Copied" (a different width) grows it away from the
+      // content in both cases rather than across it.
+      const x = edge - wr.left - wrap.clientLeft + wrap.scrollLeft;
+      bar.style.left = beside ? `${x}px` : '';
+      bar.style.right = beside ? '' : `${wrap.clientWidth - x}px`;
+    };
+
+    // The block is looked up from the pointer's position, not the event target, so
+    // content scrolling under a still pointer and a re-render are handled the same way,
+    // and the bar sitting over its own block never counts as "over nothing".
+    const update = force => {
+      const under = inside ? document.elementsFromPoint(x, y).find(n => !bar.contains(n)) : null;
+      const block = under && under.closest(COPY_BLOCKS);
+      const next = block && p.preview.contains(block) ? block : null;
+      if (!next) { target = null; bar.hidden = true; return; }
+      if (next !== target || force) { target = next; place(); }
+    };
+    wrap.addEventListener('pointermove', e => { inside = true; x = e.clientX; y = e.clientY; update(false); });
+    wrap.addEventListener('pointerleave', () => { inside = false; update(false); });
+    wrap.addEventListener('scroll', () => { if (inside) update(true); });
+    p.copyRefresh = () => update(true);
+
+    bar.addEventListener('mousedown', e => e.preventDefault());   // leave focus and the caret where they were
+    bar.addEventListener('click', async e => {
+      const btn = e.target.closest('.copy-btn');
+      if (!btn || !target) return;
+      try {
+        // Both payloads are built before the first await, inside the click itself.
+        await writeClipboard(blockText(target), btn.dataset.mode === 'rich' ? blockHTML(target) : null);
+        showCopied(btn);
+      } catch (err) {
+        flash(tr('copy.failed', (err && err.message) || tr('error.unknown')));
+      }
+    });
+  }
 
   function applyRatio(tab) {
     if (tab.kind === 'slides') return;
@@ -2047,6 +2308,16 @@
   /* ==================== Toolbar / shortcuts ==================== */
 
   el.newTab.addEventListener('click', () => createTab({ nameKey: 'untitled' }));
+
+  // The tab strip scrolls sideways but has no scrollbar to grab, so an ordinary vertical
+  // wheel moves it. Sideways gestures (tilt wheels, touchpads) already scroll it natively.
+  el.tabs.addEventListener('wheel', e => {
+    if (e.ctrlKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    if (el.tabs.scrollWidth <= el.tabs.clientWidth) return;
+    const unit = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? el.tabs.clientWidth : 1;
+    el.tabs.scrollLeft += e.deltaY * unit;
+    e.preventDefault();
+  }, { passive: false });
   el.open.addEventListener('click', () => openFiles());
   el.save.addEventListener('click', () => { const t = activeTab(); if (t) saveTab(t); });
   el.toggleEditor.addEventListener('click', () => toggleEditor(activeTab()));
